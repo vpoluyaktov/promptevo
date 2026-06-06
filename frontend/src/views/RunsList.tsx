@@ -93,11 +93,11 @@ export default function RunsList() {
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Created</th>
+                  <th className="col-mobile-hide">Created</th>
                   <th>Player Model</th>
-                  <th>Reflector Model</th>
-                  <th>Seed</th>
-                  <th>Gens</th>
+                  <th className="col-mobile-hide">Reflector Model</th>
+                  <th className="col-mobile-hide">Seed</th>
+                  <th className="col-mobile-hide">Gens</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
@@ -108,11 +108,11 @@ export default function RunsList() {
                   return (
                     <tr key={r.id} className="clickable" onClick={() => navigate(`/runs/${r.id}`)}>
                       <td style={{ fontWeight: 600 }}>#{r.id}</td>
-                      <td className="text-secondary">{fmt(r.createdAt)}</td>
-                      <td className="font-mono text-sm">{r.playerModel}</td>
-                      <td className="font-mono text-sm">{r.reflectorModel}</td>
-                      <td>{r.seed}</td>
-                      <td>{r.generations}</td>
+                      <td className="text-secondary col-mobile-hide">{fmt(r.createdAt)}</td>
+                      <td className="font-mono text-sm col-model">{r.playerModel}</td>
+                      <td className="font-mono text-sm col-mobile-hide">{r.reflectorModel}</td>
+                      <td className="col-mobile-hide">{r.seed}</td>
+                      <td className="col-mobile-hide">{r.generations}</td>
                       <td>{statusBadge(r.status)}</td>
                       <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
                         {r.status === 'running' && (

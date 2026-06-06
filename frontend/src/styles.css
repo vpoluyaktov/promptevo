@@ -301,3 +301,22 @@ tr.clickable:hover td { background: var(--bg-secondary); }
 .font-mono { font-family: 'Courier New', monospace; }
 .big-stat { font-size: 2.5rem; font-weight: 700; color: var(--text); line-height: 1; }
 .big-stat-label { font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px; }
+
+/* Mobile ≤600px */
+@media (max-width: 600px) {
+  .nav { padding: 0 12px; gap: 12px; }
+  .nav-links { gap: 4px; }
+  .nav-link { padding: 4px 6px; font-size: 0.82rem; }
+
+  .page, .page-sm { padding: 16px 12px; }
+
+  .form-row { grid-template-columns: 1fr; }
+
+  .col-mobile-hide { display: none; }
+
+  .col-model { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .wordle-board { grid-template-rows: repeat(6, 52px); }
+  .wordle-row { grid-template-columns: repeat(5, 52px); }
+  .tile { width: 52px; height: 52px; font-size: 1.6rem; }
+}
