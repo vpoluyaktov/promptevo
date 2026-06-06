@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Game, Guess } from '../api/types'
 import { api } from '../api/client'
 import GameBoard from './GameBoard'
@@ -23,11 +23,11 @@ function GameModal({ game, onClose }: GameModalProps) {
   const [guesses, setGuesses] = useState<Guess[] | null>(null)
   const [loading, setLoading] = useState(true)
 
-  useState(() => {
+  useEffect(() => {
     api.listGuesses(game.id)
       .then((r) => setGuesses(r.guesses))
       .finally(() => setLoading(false))
-  })
+  }, [game.id])
 
   const { guessWords, feedbacks } = guesses ? feedbackToArrays(guesses) : { guessWords: [], feedbacks: [] }
 

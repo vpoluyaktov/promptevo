@@ -97,6 +97,9 @@ export default function RunDetail() {
 
   useEffect(() => {
     setLoading(true)
+    setRun(null)
+    setGames([])
+    setError(undefined)
     Promise.all([
       api.getRun(runId),
       api.listGames(runId),
@@ -137,7 +140,13 @@ export default function RunDetail() {
     )
   }
 
-  if (!run) return null
+  if (!run) {
+    return (
+      <div className="page" style={{ display: 'flex', justifyContent: 'center', paddingTop: 80 }}>
+        <div className="spinner" />
+      </div>
+    )
+  }
 
   const gens = run.generationsData ?? []
   const lastGen = gens[gens.length - 1]

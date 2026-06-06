@@ -1,10 +1,11 @@
-import { BrowserRouter, Routes, Route, NavLink, Outlet, Navigate, useNavigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, NavLink, Outlet, Navigate, useNavigate, Link } from 'react-router-dom'
 import RunsList from './views/RunsList'
 import NewRun from './views/NewRun'
 import LiveRun from './views/LiveRun'
 import RunDetail from './views/RunDetail'
 import Compare from './views/Compare'
 import Login from './views/Login'
+import ErrorBoundary from './components/ErrorBoundary'
 import { isAuthenticated, clearToken } from './auth'
 
 function AuthGuard() {
@@ -57,7 +58,9 @@ export default function App() {
             element={
               <>
                 <NavBar />
-                <Outlet />
+                <ErrorBoundary>
+                  <Outlet />
+                </ErrorBoundary>
               </>
             }
           >
@@ -67,6 +70,15 @@ export default function App() {
             <Route path="/runs/:id/live" element={<LiveRun />} />
             <Route path="/runs/:id" element={<RunDetail />} />
             <Route path="/compare" element={<Compare />} />
+            <Route path="*" element={
+              <div className="page">
+                <div className="empty-state">
+                  <h3>Page not found</h3>
+                  <p>The URL you navigated to doesn't exist.</p>
+                  <Link to="/runs" className="btn btn-primary" style={{ marginTop: 16 }}>← Back to Runs</Link>
+                </div>
+              </div>
+            } />
           </Route>
         </Route>
       </Routes>
