@@ -6,10 +6,6 @@ package store
 import (
 	"context"
 	"errors"
-
-	// Registers the pure-Go, CGO-free "sqlite" driver for database/sql.
-	// The sqliteStore implementation (Backend) opens with sql.Open("sqlite", DB_PATH).
-	_ "modernc.org/sqlite"
 )
 
 // ErrNotFound is returned when a requested row does not exist.
@@ -90,6 +86,7 @@ type Store interface {
 
 	// games
 	CreateGame(ctx context.Context, g *Game) (int64, error)
+	UpdateGame(ctx context.Context, g *Game) error
 	ListGames(ctx context.Context, runID int64, genIndex *int) ([]*Game, error)
 
 	// guesses

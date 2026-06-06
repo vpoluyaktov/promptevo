@@ -3,6 +3,13 @@
 // No external dependencies. See ARCHITECTURE.md §9.
 package wordle
 
+import (
+	"bufio"
+	"math"
+	"os"
+	"strings"
+)
+
 // TileResult represents the result of a single tile in a Wordle guess.
 type TileResult int
 
@@ -21,6 +28,9 @@ const MaxTurns = 6
 // Feedback is a 5-element array of TileResult.
 type Feedback [WordLen]TileResult
 
+// allGreen is the winning feedback pattern.
+var allGreen = Feedback{Green, Green, Green, Green, Green}
+
 // String encodes feedback as a GYX string (G=green, Y=yellow, X=gray).
 func (f Feedback) String() string {
 	b := make([]byte, WordLen)
@@ -37,6 +47,26 @@ func (f Feedback) String() string {
 	return string(b)
 }
 
+// FromString parses a GYX-encoded string into a Feedback. Invalid characters
+// are treated as Gray. If s is not exactly WordLen characters, returns zero.
+func FromString(s string) Feedback {
+	var f Feedback
+	if len(s) != WordLen {
+		return f
+	}
+	for i, c := range s {
+		switch c {
+		case 'G', 'g':
+			f[i] = Green
+		case 'Y', 'y':
+			f[i] = Yellow
+		default:
+			f[i] = Gray
+		}
+	}
+	return f
+}
+
 // Game holds the state of a single Wordle game.
 type Game struct {
 	Answer    string
@@ -44,6 +74,34 @@ type Game struct {
 	Feedbacks []Feedback
 	Won       bool
 	MaxTurns  int
+}
+
+// NewGame creates a new game for the given answer.
+func NewGame(answer string) *Game {
+	return &Game{
+		Answer:   answer,
+		MaxTurns: MaxTurns,
+	}
+}
+
+// AddGuess scores a guess, appends it to the game state, and returns the feedback.
+// Callers must check IsOver before calling.
+func (g *Game) AddGuess(guess string) Feedback {
+	fb := ScoreGuess(guess, g.Answer)
+	g.Guesses = append(g.Guesses, guess)
+	g.Feedbacks = append(g.Feedbacks, fb)
+	if fb == allGreen {
+		g.Won = true
+	}
+	return fb
+}
+
+// IsWon reports whether the game has been won.
+func (g *Game) IsWon() bool { return g.Won }
+
+// IsOver reports whether the game is finished (won or max turns reached).
+func (g *Game) IsOver() bool {
+	return g.Won || len(g.Guesses) >= g.MaxTurns
 }
 
 // ScoreGuess scores a guess against the answer using correct duplicate-letter
@@ -56,10 +114,40 @@ type Game struct {
 //
 // Inputs are assumed to be exactly WordLen lowercase ASCII letters; callers
 // must validate upstream. Mismatched lengths return the zero Feedback (XXXXX).
-//
-// TODO(backend): implement per the spec; QA owns the golden tests.
 func ScoreGuess(guess, answer string) Feedback {
 	var f Feedback
+	if len(guess) != WordLen || len(answer) != WordLen {
+		return f // all gray (zero value)
+	}
+
+	// Build per-letter remaining budget from answer.
+	var remaining [26]int
+	for i := 0; i < WordLen; i++ {
+		remaining[answer[i]-'a']++
+	}
+
+	// Pass 1: assign Greens and decrement budget.
+	for i := 0; i < WordLen; i++ {
+		if guess[i] == answer[i] {
+			f[i] = Green
+			remaining[guess[i]-'a']--
+		}
+	}
+
+	// Pass 2: assign Yellows or Grays for non-green positions.
+	for i := 0; i < WordLen; i++ {
+		if f[i] == Green {
+			continue
+		}
+		idx := guess[i] - 'a'
+		if remaining[idx] > 0 {
+			f[i] = Yellow
+			remaining[idx]--
+		} else {
+			f[i] = Gray
+		}
+	}
+
 	return f
 }
 
@@ -70,9 +158,46 @@ type WordLists struct {
 }
 
 // LoadWordLists reads answers and guesses (one lowercase word per line).
-// TODO(backend): implement file loading + validation.
+// Empty lines are skipped; whitespace is trimmed.
 func LoadWordLists(answersPath, guessesPath string) (*WordLists, error) {
-	return &WordLists{Guesses: map[string]struct{}{}}, nil
+	answers, err := loadWords(answersPath)
+	if err != nil {
+		return nil, err
+	}
+
+	guessList, err := loadWords(guessesPath)
+	if err != nil {
+		return nil, err
+	}
+
+	guessSet := make(map[string]struct{}, len(guessList))
+	for _, w := range guessList {
+		guessSet[w] = struct{}{}
+	}
+
+	return &WordLists{
+		Answers: answers,
+		Guesses: guessSet,
+	}, nil
+}
+
+// loadWords reads one word per line from path, lowercased, trimmed, skipping empty lines.
+func loadWords(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var words []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		w := strings.TrimSpace(strings.ToLower(sc.Text()))
+		if w != "" {
+			words = append(words, w)
+		}
+	}
+	return words, sc.Err()
 }
 
 // IsValidGuess reports whether word is in the valid-guess set.
@@ -83,15 +208,31 @@ func (wl *WordLists) IsValidGuess(word string) bool {
 
 // FilterCandidates returns the subset of candidates consistent with fb for the
 // given guess (i.e. ScoreGuess(guess, c) == fb). Basis for information gain.
-// TODO(backend): implement.
+// Returns an empty slice (not nil) when candidates is empty.
 func FilterCandidates(candidates []string, guess string, fb Feedback) []string {
-	return nil
+	out := candidates[:0:0] // empty slice with no backing array
+	for _, c := range candidates {
+		if ScoreGuess(guess, c) == fb {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // InfoGainBits returns log2(before/after), the bits eliminated by a guess.
-// See ARCHITECTURE.md §9.3 for boundary behavior (before==0, after==0,
-// after==before).
-// TODO(backend): implement.
+// Boundary behavior (ARCHITECTURE.md §9.3):
+//   - before == 0 → 0 (no information definable)
+//   - after  == 0 → treat as 1 (defensive; answer is always consistent)
+//   - after == before → 0 bits (guess eliminated nothing)
 func InfoGainBits(before, after int) float64 {
-	return 0
+	if before == 0 {
+		return 0
+	}
+	if after <= 0 {
+		after = 1
+	}
+	if after >= before {
+		return 0
+	}
+	return math.Log2(float64(before) / float64(after))
 }
