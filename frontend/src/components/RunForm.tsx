@@ -19,6 +19,8 @@ interface FormState {
   includeBaselines: boolean
 }
 
+const STORAGE_KEY = 'promptevo_run_settings'
+
 const DEFAULTS: FormState = {
   playerModel: '',
   reflectorModel: '',
@@ -28,6 +30,22 @@ const DEFAULTS: FormState = {
   temperature: '0.7',
   wordSampleSize: '20',
   includeBaselines: false,
+}
+
+function loadSaved(): Partial<FormState> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) return JSON.parse(raw) as Partial<FormState>
+  } catch { /* ignore */ }
+  return {}
+}
+
+function saveSettings(f: FormState) {
+  try {
+    // Don't persist the seed — each launch should get a fresh random one
+    const { seed: _seed, ...rest } = f
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(rest))
+  } catch { /* ignore */ }
 }
 
 function randomSeed() {
@@ -53,23 +71,30 @@ function validate(f: FormState): Partial<Record<keyof FormState, string>> {
 
 export default function RunForm({ onSubmit, loading, error }: Props) {
   const [models, setModels] = useState<string[]>([])
-  const [form, setForm] = useState<FormState>(DEFAULTS)
+  const [form, setForm] = useState<FormState>({ ...DEFAULTS, ...loadSaved() })
   const [touched, setTouched] = useState<Partial<Record<keyof FormState, boolean>>>({})
   const [submitted, setSubmitted] = useState(false)
 
   useEffect(() => {
+    const saved = loadSaved()
     api.listModels().then((r) => {
       setModels(r.models)
+      // Use saved model if it still exists in the list, otherwise first model
+      const pickModel = (saved: string | undefined) =>
+        saved && r.models.includes(saved) ? saved : (r.models[0] ?? '')
       setForm((f) => ({
         ...f,
-        playerModel: r.models[0] ?? '',
-        reflectorModel: r.models[0] ?? '',
+        playerModel: pickModel(saved.playerModel),
+        reflectorModel: pickModel(saved.reflectorModel),
       }))
     }).catch(() => {
-      // use fallback list
       const fallback = ['openai/gpt-4o-mini', 'anthropic/claude-3-haiku']
       setModels(fallback)
-      setForm((f) => ({ ...f, playerModel: fallback[0], reflectorModel: fallback[0] }))
+      setForm((f) => ({
+        ...f,
+        playerModel: saved.playerModel && fallback.includes(saved.playerModel) ? saved.playerModel : fallback[0],
+        reflectorModel: saved.reflectorModel && fallback.includes(saved.reflectorModel) ? saved.reflectorModel : fallback[0],
+      }))
     })
   }, [])
 
@@ -85,6 +110,7 @@ export default function RunForm({ onSubmit, loading, error }: Props) {
     e.preventDefault()
     setSubmitted(true)
     if (Object.keys(errs).length > 0) return
+    saveSettings(form)
     await onSubmit({
       playerModel: form.playerModel,
       reflectorModel: form.reflectorModel,

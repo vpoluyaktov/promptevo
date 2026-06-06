@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -266,6 +267,7 @@ func (s *server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	if err != nil || len(models) == 0 {
 		models = fallbackModels(s.cfg.LLMProvider)
 	}
+	sort.Strings(models)
 	writeJSON(w, http.StatusOK, map[string][]string{"models": models})
 }
 
