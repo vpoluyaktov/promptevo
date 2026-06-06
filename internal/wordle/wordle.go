@@ -76,11 +76,19 @@ type Game struct {
 	MaxTurns  int
 }
 
-// NewGame creates a new game for the given answer.
+// NewGame creates a new game for the given answer with the default turn limit.
 func NewGame(answer string) *Game {
 	return &Game{
 		Answer:   answer,
 		MaxTurns: MaxTurns,
+	}
+}
+
+// NewGameWithMaxTurns creates a new game with a custom turn limit.
+func NewGameWithMaxTurns(answer string, maxTurns int) *Game {
+	return &Game{
+		Answer:   answer,
+		MaxTurns: maxTurns,
 	}
 }
 

@@ -46,11 +46,17 @@ func Open(dbPath string) (*SQLiteStore, error) {
 	return &SQLiteStore{db: db}, nil
 }
 
-// Migrate applies the initial schema (idempotent via IF NOT EXISTS).
+// Migrate applies the initial schema (idempotent via IF NOT EXISTS) and runs
+// incremental ALTER TABLE statements for columns added after the initial deploy.
 func (s *SQLiteStore) Migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, migrationSQL); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	// Add max_guesses column to runs (ignored if it already exists).
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE runs ADD COLUMN max_guesses INTEGER NOT NULL DEFAULT 4`)
+	// Add token-split columns to generations (ignored if they already exist).
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE generations ADD COLUMN player_tokens INTEGER NOT NULL DEFAULT 0`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE generations ADD COLUMN reflector_tokens INTEGER NOT NULL DEFAULT 0`)
 	return nil
 }
 
@@ -63,10 +69,10 @@ func (s *SQLiteStore) CreateRun(ctx context.Context, r *Run) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO runs
 			(player_model, reflector_model, temperature, seed,
-			 generations, games_per_gen, word_sample_size, status, config_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 generations, games_per_gen, word_sample_size, max_guesses, status, config_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.PlayerModel, r.ReflectorModel, r.Temperature, r.Seed,
-		r.Generations, r.GamesPerGen, r.WordSampleSize, r.Status, r.ConfigJSON,
+		r.Generations, r.GamesPerGen, r.WordSampleSize, r.MaxGuesses, r.Status, r.ConfigJSON,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("create run: %w", err)
@@ -81,7 +87,7 @@ func (s *SQLiteStore) CreateRun(ctx context.Context, r *Run) (int64, error) {
 func (s *SQLiteStore) GetRun(ctx context.Context, id int64) (*Run, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, created_at, player_model, reflector_model, temperature, seed,
-		       generations, games_per_gen, word_sample_size, status, config_json
+		       generations, games_per_gen, word_sample_size, max_guesses, status, config_json
 		FROM runs WHERE id = ?`, id)
 	r, err := scanRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -93,7 +99,7 @@ func (s *SQLiteStore) GetRun(ctx context.Context, id int64) (*Run, error) {
 func (s *SQLiteStore) ListRuns(ctx context.Context) ([]*Run, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, created_at, player_model, reflector_model, temperature, seed,
-		       generations, games_per_gen, word_sample_size, status, config_json
+		       generations, games_per_gen, word_sample_size, max_guesses, status, config_json
 		FROM runs ORDER BY id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
@@ -163,7 +169,7 @@ func scanRun(s scanner) (*Run, error) {
 	err := s.Scan(
 		&r.ID, &r.CreatedAt,
 		&r.PlayerModel, &r.ReflectorModel, &r.Temperature, &r.Seed,
-		&r.Generations, &r.GamesPerGen, &r.WordSampleSize, &r.Status,
+		&r.Generations, &r.GamesPerGen, &r.WordSampleSize, &r.MaxGuesses, &r.Status,
 		&r.ConfigJSON,
 	)
 	if err != nil {
@@ -193,15 +199,17 @@ func (s *SQLiteStore) CreateGeneration(ctx context.Context, g *Generation) (int6
 func (s *SQLiteStore) UpdateGenerationStats(ctx context.Context, g *Generation) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE generations
-		SET reflection_text = ?,
-		    solve_rate      = ?,
-		    mean_guesses    = ?,
-		    mean_info_gain  = ?,
-		    violation_rate  = ?,
-		    tokens_used     = ?
+		SET reflection_text  = ?,
+		    solve_rate        = ?,
+		    mean_guesses      = ?,
+		    mean_info_gain    = ?,
+		    violation_rate    = ?,
+		    tokens_used       = ?,
+		    player_tokens     = ?,
+		    reflector_tokens  = ?
 		WHERE id = ?`,
 		g.ReflectionText, g.SolveRate, g.MeanGuesses, g.MeanInfoGain,
-		g.ViolationRate, g.TokensUsed, g.ID,
+		g.ViolationRate, g.TokensUsed, g.PlayerTokens, g.ReflectorTokens, g.ID,
 	)
 	return err
 }
@@ -210,7 +218,7 @@ func (s *SQLiteStore) ListGenerations(ctx context.Context, runID int64) ([]*Gene
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, run_id, gen_index, prompt_text, prompt_len,
 		       reflection_text, solve_rate, mean_guesses, mean_info_gain,
-		       violation_rate, tokens_used
+		       violation_rate, tokens_used, player_tokens, reflector_tokens
 		FROM generations
 		WHERE run_id = ?
 		ORDER BY gen_index ASC`, runID)
@@ -225,7 +233,7 @@ func (s *SQLiteStore) ListGenerations(ctx context.Context, runID int64) ([]*Gene
 		if err := rows.Scan(
 			&g.ID, &g.RunID, &g.GenIndex, &g.PromptText, &g.PromptLen,
 			&g.ReflectionText, &g.SolveRate, &g.MeanGuesses, &g.MeanInfoGain,
-			&g.ViolationRate, &g.TokensUsed,
+			&g.ViolationRate, &g.TokensUsed, &g.PlayerTokens, &g.ReflectorTokens,
 		); err != nil {
 			return nil, err
 		}
@@ -340,6 +348,150 @@ func (s *SQLiteStore) CreateGuess(ctx context.Context, gu *Guess) (int64, error)
 		return 0, err
 	}
 	return id, nil
+}
+
+// ─── analytics ───────────────────────────────────────────────────────────────
+
+func (s *SQLiteStore) GameOutcomeCounts(ctx context.Context, runID int64) ([]OutcomeCount, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT gen_index, won, num_guesses, COUNT(*) AS cnt
+		FROM games
+		WHERE run_id = ? AND agent_type = 'llm'
+		GROUP BY gen_index, won, num_guesses
+		ORDER BY gen_index ASC, won ASC, num_guesses ASC`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("game outcome counts: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]OutcomeCount, 0)
+	for rows.Next() {
+		var oc OutcomeCount
+		var won int
+		if err := rows.Scan(&oc.GenIndex, &won, &oc.NumGuesses, &oc.Count); err != nil {
+			return nil, err
+		}
+		oc.Won = won != 0
+		out = append(out, oc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) TurnInfoGainStats(ctx context.Context, runID int64) ([]TurnInfoGainStat, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.gen_index, gu.turn_index,
+		       AVG(gu.info_gain_bits) AS mean_ig,
+		       COUNT(*) AS n
+		FROM guesses gu
+		JOIN games g ON gu.game_id = g.id
+		WHERE g.run_id = ? AND g.agent_type = 'llm'
+		GROUP BY g.gen_index, gu.turn_index
+		ORDER BY g.gen_index ASC, gu.turn_index ASC`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("turn info gain stats: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]TurnInfoGainStat, 0)
+	for rows.Next() {
+		var t TurnInfoGainStat
+		if err := rows.Scan(&t.GenIndex, &t.TurnIndex, &t.MeanInfoGain, &t.N); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) OpeningWordCounts(ctx context.Context, runID int64) ([]OpeningWordCount, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.gen_index, gu.guess, COUNT(*) AS cnt
+		FROM guesses gu
+		JOIN games g ON gu.game_id = g.id
+		WHERE g.run_id = ? AND g.agent_type = 'llm' AND gu.turn_index = 0
+		GROUP BY g.gen_index, gu.guess
+		ORDER BY g.gen_index ASC, cnt DESC, gu.guess ASC`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("opening word counts: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]OpeningWordCount, 0)
+	for rows.Next() {
+		var ow OpeningWordCount
+		if err := rows.Scan(&ow.GenIndex, &ow.Guess, &ow.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, ow)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) ReasoningVerbosityStats(ctx context.Context, runID int64) ([]ReasoningStat, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.id, g.gen_index, g.won, g.num_guesses,
+		       COALESCE(SUM(LENGTH(gu.reasoning_text)), 0) AS chars
+		FROM games g
+		LEFT JOIN guesses gu ON gu.game_id = g.id
+		WHERE g.run_id = ? AND g.agent_type = 'llm'
+		GROUP BY g.id
+		ORDER BY g.gen_index ASC, g.id ASC`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("reasoning verbosity stats: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]ReasoningStat, 0)
+	for rows.Next() {
+		var rs ReasoningStat
+		var won int
+		var chars int
+		if err := rows.Scan(&rs.GameID, &rs.GenIndex, &won, &rs.NumGuesses, &chars); err != nil {
+			return nil, err
+		}
+		rs.Won = won != 0
+		rs.ReasoningChars = chars
+		out = append(out, rs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) WordDifficultyStats(ctx context.Context, runID int64) ([]WordDifficultyStat, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT answer, COUNT(*) AS games, SUM(won) AS wins
+		FROM games
+		WHERE run_id = ? AND agent_type = 'llm'
+		GROUP BY answer
+		ORDER BY (CAST(SUM(won) AS REAL) / COUNT(*)) ASC, answer ASC`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("word difficulty stats: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]WordDifficultyStat, 0)
+	for rows.Next() {
+		var wd WordDifficultyStat
+		if err := rows.Scan(&wd.Answer, &wd.Games, &wd.Wins); err != nil {
+			return nil, err
+		}
+		out = append(out, wd)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *SQLiteStore) ListGuesses(ctx context.Context, gameID int64) ([]*Guess, error) {

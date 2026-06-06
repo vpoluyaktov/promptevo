@@ -13,11 +13,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -193,6 +194,7 @@ func (s *server) buildRoutes() http.Handler {
 			r.Delete("/runs/{id}", s.handleDeleteRun)
 			r.Get("/runs/{id}/generations", s.handleListGenerations)
 			r.Get("/runs/{id}/games", s.handleListGames)
+			r.Get("/runs/{id}/analytics", s.handleGetAnalytics)
 			r.Get("/runs/{id}/stream", s.handleStream)
 			r.Get("/games/{id}/guesses", s.handleListGuesses)
 		})
@@ -298,14 +300,15 @@ func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
 
 // createRunRequest is the POST /api/runs body.
 type createRunRequest struct {
-	PlayerModel      string  `json:"playerModel"`
-	ReflectorModel   string  `json:"reflectorModel"`
+	PlayerModel      string   `json:"playerModel"`
+	ReflectorModel   string   `json:"reflectorModel"`
 	Temperature      *float64 `json:"temperature"`
-	Seed             *int64  `json:"seed"`
-	Generations      int     `json:"generations"`
-	GamesPerGen      int     `json:"gamesPerGen"`
-	WordSampleSize   int     `json:"wordSampleSize"`
-	IncludeBaselines bool    `json:"includeBaselines"`
+	Seed             *int64   `json:"seed"`
+	Generations      int      `json:"generations"`
+	GamesPerGen      int      `json:"gamesPerGen"`
+	WordSampleSize   int      `json:"wordSampleSize"`
+	MaxGuesses       int      `json:"maxGuesses"`
+	IncludeBaselines bool     `json:"includeBaselines"`
 }
 
 func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
@@ -357,6 +360,14 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("wordSampleSize must be between 1 and %d", maxSample))
 		return
 	}
+	maxGuesses := req.MaxGuesses
+	if maxGuesses == 0 {
+		maxGuesses = 4 // default: hard mode
+	}
+	if maxGuesses < 2 || maxGuesses > 6 {
+		writeError(w, http.StatusBadRequest, "maxGuesses must be between 2 and 6")
+		return
+	}
 
 	// Concurrency check.
 	if s.activeRunCount(r.Context()) >= s.cfg.MaxConcurrentRuns {
@@ -378,6 +389,7 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		Generations:    req.Generations,
 		GamesPerGen:    req.GamesPerGen,
 		WordSampleSize: req.WordSampleSize,
+		MaxGuesses:     maxGuesses,
 		Status:         "pending",
 		ConfigJSON:     string(cfgJSON),
 	}
@@ -417,6 +429,130 @@ type runDetailResponse struct {
 	*store.Run
 	GenerationsData []*store.Generation `json:"generationsData"`
 	Convergence     string              `json:"convergence"`
+}
+
+// ─── Analytics response types ─────────────────────────────────────────────────
+
+type AnalyticsResponse struct {
+	RunID               int64                  `json:"runId"`
+	MaxGuesses          int                    `json:"maxGuesses"`
+	Meta                AnalyticsMeta          `json:"meta"`
+	SolveRateCI         []SolveRateCIPoint     `json:"solveRateCI"`
+	WinDistribution     []WinDistPoint         `json:"winDistribution"`
+	TurnInfoGain        []TurnInfoGainPoint    `json:"turnInfoGain"`
+	OpeningWords        []OpeningWordsPoint    `json:"openingWords"`
+	RemainingCandidates []RemainingCandPoint   `json:"remainingCandidates"`
+	TokenEfficiency     []TokenEfficiencyPoint `json:"tokenEfficiency"`
+	ReasoningVerbosity  []ReasoningPoint       `json:"reasoningVerbosity"`
+	WordDifficulty      []WordDifficultyPoint  `json:"wordDifficulty"`
+}
+
+type AnalyticsMeta struct {
+	TotalLlmGames int `json:"totalLlmGames"`
+	Generations   int `json:"generations"`
+}
+
+type SolveRateCIPoint struct {
+	GenIndex  int     `json:"genIndex"`
+	N         int     `json:"n"`
+	Wins      int     `json:"wins"`
+	SolveRate float64 `json:"solveRate"`
+	CILower   float64 `json:"ciLower"`
+	CIUpper   float64 `json:"ciUpper"`
+}
+
+type WinDistPoint struct {
+	GenIndex  int         `json:"genIndex"`
+	Total     int         `json:"total"`
+	WonByTurn map[int]int `json:"wonByTurn"` // marshals keys as strings
+	Lost      int         `json:"lost"`
+}
+
+type TurnInfoGainPoint struct {
+	GenIndex     int     `json:"genIndex"`
+	TurnIndex    int     `json:"turnIndex"`
+	MeanInfoGain float64 `json:"meanInfoGain"`
+	N            int     `json:"n"`
+}
+
+type OpeningWordsPoint struct {
+	GenIndex int              `json:"genIndex"`
+	Words    []OpeningWordRow `json:"words"`
+}
+
+type OpeningWordRow struct {
+	Word  string `json:"word"`
+	Count int    `json:"count"`
+}
+
+type RemainingCandPoint struct {
+	GameID              int64  `json:"gameId"`
+	GenIndex            int    `json:"genIndex"`
+	Answer              string `json:"answer"`
+	RemainingCandidates int    `json:"remainingCandidates"`
+	NumGuesses          int    `json:"numGuesses"`
+}
+
+type TokenEfficiencyPoint struct {
+	GenIndex        int  `json:"genIndex"`
+	PlayerTokens    int  `json:"playerTokens"`
+	ReflectorTokens int  `json:"reflectorTokens"`
+	TokensUsed      int  `json:"tokensUsed"`
+	Split           bool `json:"split"`
+}
+
+type ReasoningPoint struct {
+	GameID         int64 `json:"gameId"`
+	GenIndex       int   `json:"genIndex"`
+	Won            bool  `json:"won"`
+	ReasoningChars int   `json:"reasoningChars"`
+	NumGuesses     int   `json:"numGuesses"`
+}
+
+type WordDifficultyPoint struct {
+	Answer  string  `json:"answer"`
+	Games   int     `json:"games"`
+	Wins    int     `json:"wins"`
+	WinRate float64 `json:"winRate"`
+}
+
+// wilson computes the 95% Wilson score confidence interval for wins out of n trials.
+// Returns (0, 0) when n == 0 (caller should omit the row).
+// Both bounds are clamped to [0, 1].
+func wilson(wins, n int) (lower, upper float64) {
+	if n == 0 {
+		return 0, 0
+	}
+	p := float64(wins) / float64(n)
+	z := 1.96
+	z2 := z * z
+	fn := float64(n)
+	denom := 1 + z2/fn
+	center := (p + z2/(2*fn)) / denom
+	margin := (z / denom) * math.Sqrt(p*(1-p)/fn+z2/(4*fn*fn))
+	lower = clamp01(center - margin)
+	upper = clamp01(center + margin)
+	return lower, upper
+}
+
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+// round3 rounds a float64 to 3 decimal places.
+func round3(v float64) float64 {
+	return math.Round(v*1000) / 1000
+}
+
+// round2 rounds a float64 to 2 decimal places.
+func round2(v float64) float64 {
+	return math.Round(v*100) / 100
 }
 
 func (s *server) handleGetRun(w http.ResponseWriter, r *http.Request) {
@@ -573,6 +709,272 @@ func (s *server) handleListGuesses(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string][]*store.Guess{"guesses": guesses})
+}
+
+// ─── Analytics handler ────────────────────────────────────────────────────────
+
+func (s *server) handleGetAnalytics(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	run, err := s.store.GetRun(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "run not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get run")
+		return
+	}
+	resp, err := s.computeAnalytics(r.Context(), run)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to compute analytics")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *server) computeAnalytics(ctx context.Context, run *store.Run) (*AnalyticsResponse, error) {
+	runID := run.ID
+	maxGuesses := run.MaxGuesses
+
+	// 1. Generations (for token efficiency)
+	gens, err := s.store.ListGenerations(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("list generations: %w", err)
+	}
+
+	// 2. GameOutcomeCounts (feeds CI + win distribution)
+	outcomeCounts, err := s.store.GameOutcomeCounts(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("game outcome counts: %w", err)
+	}
+
+	// 3. TurnInfoGainStats
+	turnStats, err := s.store.TurnInfoGainStats(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("turn info gain stats: %w", err)
+	}
+
+	// 4. OpeningWordCounts
+	openingCounts, err := s.store.OpeningWordCounts(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("opening word counts: %w", err)
+	}
+
+	// 5. ReasoningVerbosityStats
+	reasoningStats, err := s.store.ReasoningVerbosityStats(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("reasoning verbosity stats: %w", err)
+	}
+
+	// 6. WordDifficultyStats
+	wordStats, err := s.store.WordDifficultyStats(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("word difficulty stats: %w", err)
+	}
+
+	// 7. Remaining candidates replay: need all LLM games + guesses per lost game
+	allGames, err := s.store.ListGames(ctx, runID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list games for replay: %w", err)
+	}
+
+	// ── Build SolveRateCI + WinDistribution from outcomeCounts ───────────────
+
+	type genAcc struct {
+		n    int
+		wins int
+		// wonByTurn: initialized with all turns present
+		wonByTurn map[int]int
+		lost      int
+	}
+	genAccs := make(map[int]*genAcc)
+
+	// Ensure every gen that appears has all turns initialized.
+	ensureGen := func(gi int) *genAcc {
+		if genAccs[gi] == nil {
+			wbt := make(map[int]int, maxGuesses)
+			for t := 1; t <= maxGuesses; t++ {
+				wbt[t] = 0
+			}
+			genAccs[gi] = &genAcc{wonByTurn: wbt}
+		}
+		return genAccs[gi]
+	}
+
+	for _, oc := range outcomeCounts {
+		ga := ensureGen(oc.GenIndex)
+		ga.n += oc.Count
+		if oc.Won {
+			ga.wins += oc.Count
+			// Clamp numGuesses to [1, maxGuesses] defensively.
+			t := oc.NumGuesses
+			if t < 1 {
+				t = 1
+			}
+			if t > maxGuesses {
+				t = maxGuesses
+			}
+			ga.wonByTurn[t] += oc.Count
+		} else {
+			ga.lost += oc.Count
+		}
+	}
+
+	// Collect gen indices sorted.
+	var genIndices []int
+	for gi := range genAccs {
+		genIndices = append(genIndices, gi)
+	}
+	sort.Ints(genIndices)
+
+	solveRateCI := make([]SolveRateCIPoint, 0)
+	winDist := make([]WinDistPoint, 0)
+	totalLlmGames := 0
+
+	for _, gi := range genIndices {
+		ga := genAccs[gi]
+		totalLlmGames += ga.n
+		if ga.n > 0 {
+			lo, hi := wilson(ga.wins, ga.n)
+			solveRateCI = append(solveRateCI, SolveRateCIPoint{
+				GenIndex:  gi,
+				N:         ga.n,
+				Wins:      ga.wins,
+				SolveRate: round3(float64(ga.wins) / float64(ga.n)),
+				CILower:   round3(lo),
+				CIUpper:   round3(hi),
+			})
+		}
+		winDist = append(winDist, WinDistPoint{
+			GenIndex:  gi,
+			Total:     ga.n,
+			WonByTurn: ga.wonByTurn,
+			Lost:      ga.lost,
+		})
+	}
+
+	// ── Build TurnInfoGain ────────────────────────────────────────────────────
+
+	turnInfoGain := make([]TurnInfoGainPoint, 0, len(turnStats))
+	for _, t := range turnStats {
+		turnInfoGain = append(turnInfoGain, TurnInfoGainPoint{
+			GenIndex:     t.GenIndex,
+			TurnIndex:    t.TurnIndex,
+			MeanInfoGain: round2(t.MeanInfoGain),
+			N:            t.N,
+		})
+	}
+
+	// ── Build OpeningWords ────────────────────────────────────────────────────
+
+	openingWords := make([]OpeningWordsPoint, 0)
+	var curOWGen *OpeningWordsPoint
+	for _, ow := range openingCounts {
+		if curOWGen == nil || curOWGen.GenIndex != ow.GenIndex {
+			openingWords = append(openingWords, OpeningWordsPoint{
+				GenIndex: ow.GenIndex,
+				Words:    make([]OpeningWordRow, 0),
+			})
+			curOWGen = &openingWords[len(openingWords)-1]
+		}
+		curOWGen.Words = append(curOWGen.Words, OpeningWordRow{
+			Word:  ow.Guess,
+			Count: ow.Count,
+		})
+	}
+
+	// ── Build TokenEfficiency from generations ────────────────────────────────
+
+	tokenEfficiency := make([]TokenEfficiencyPoint, 0, len(gens))
+	for _, g := range gens {
+		split := (g.PlayerTokens + g.ReflectorTokens) > 0
+		tokenEfficiency = append(tokenEfficiency, TokenEfficiencyPoint{
+			GenIndex:        g.GenIndex,
+			PlayerTokens:    g.PlayerTokens,
+			ReflectorTokens: g.ReflectorTokens,
+			TokensUsed:      g.TokensUsed,
+			Split:           split,
+		})
+	}
+
+	// ── Build ReasoningVerbosity ──────────────────────────────────────────────
+
+	reasoningVerbosity := make([]ReasoningPoint, 0, len(reasoningStats))
+	for _, rs := range reasoningStats {
+		reasoningVerbosity = append(reasoningVerbosity, ReasoningPoint{
+			GameID:         rs.GameID,
+			GenIndex:       rs.GenIndex,
+			Won:            rs.Won,
+			ReasoningChars: rs.ReasoningChars,
+			NumGuesses:     rs.NumGuesses,
+		})
+	}
+
+	// ── Build WordDifficulty ──────────────────────────────────────────────────
+
+	wordDifficulty := make([]WordDifficultyPoint, 0, len(wordStats))
+	for _, wd := range wordStats {
+		var winRate float64
+		if wd.Games > 0 {
+			winRate = round3(float64(wd.Wins) / float64(wd.Games))
+		}
+		wordDifficulty = append(wordDifficulty, WordDifficultyPoint{
+			Answer:  wd.Answer,
+			Games:   wd.Games,
+			Wins:    wd.Wins,
+			WinRate: winRate,
+		})
+	}
+
+	// ── Remaining candidates replay (lost LLM games only) ────────────────────
+
+	remainingCandidates := make([]RemainingCandPoint, 0)
+	for _, g := range allGames {
+		if g.AgentType != "llm" || g.Won {
+			continue
+		}
+		guesses, err := s.store.ListGuesses(ctx, g.ID)
+		if err != nil {
+			return nil, fmt.Errorf("list guesses for game %d: %w", g.ID, err)
+		}
+		candidates := make([]string, len(s.lists.Answers))
+		copy(candidates, s.lists.Answers)
+		for _, gu := range guesses {
+			fb := wordle.FromString(gu.Feedback)
+			candidates = wordle.FilterCandidates(candidates, gu.Guess, fb)
+		}
+		remainingCandidates = append(remainingCandidates, RemainingCandPoint{
+			GameID:              g.ID,
+			GenIndex:            g.GenIndex,
+			Answer:              g.Answer,
+			RemainingCandidates: len(candidates),
+			NumGuesses:          g.NumGuesses,
+		})
+	}
+
+	// ── Count distinct gen indices across all LLM games ───────────────────────
+
+	genSet := make(map[int]struct{})
+	for _, oc := range outcomeCounts {
+		genSet[oc.GenIndex] = struct{}{}
+	}
+
+	return &AnalyticsResponse{
+		RunID:               runID,
+		MaxGuesses:          maxGuesses,
+		Meta:                AnalyticsMeta{TotalLlmGames: totalLlmGames, Generations: len(genSet)},
+		SolveRateCI:         solveRateCI,
+		WinDistribution:     winDist,
+		TurnInfoGain:        turnInfoGain,
+		OpeningWords:        openingWords,
+		RemainingCandidates: remainingCandidates,
+		TokenEfficiency:     tokenEfficiency,
+		ReasoningVerbosity:  reasoningVerbosity,
+		WordDifficulty:      wordDifficulty,
+	}, nil
 }
 
 // ─── SSE stream handler ───────────────────────────────────────────────────────

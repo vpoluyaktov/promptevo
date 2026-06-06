@@ -22,6 +22,7 @@ type Run struct {
 	Generations    int     `json:"generations"`
 	GamesPerGen    int     `json:"gamesPerGen"`
 	WordSampleSize int     `json:"wordSampleSize"`
+	MaxGuesses     int     `json:"maxGuesses"`
 	Status         string  `json:"status"`
 	ConfigJSON     string  `json:"-"`
 }
@@ -39,7 +40,9 @@ type Generation struct {
 	MeanGuesses    *float64 `json:"meanGuesses"`
 	MeanInfoGain   *float64 `json:"meanInfoGain"`
 	ViolationRate  *float64 `json:"violationRate"`
-	TokensUsed     int      `json:"tokensUsed"`
+	TokensUsed      int      `json:"tokensUsed"`
+	PlayerTokens    int      `json:"playerTokens"`
+	ReflectorTokens int      `json:"reflectorTokens"`
 }
 
 // Game mirrors the games table.
@@ -64,6 +67,45 @@ type Guess struct {
 	Feedback      string  `json:"feedback"`
 	InfoGainBits  float64 `json:"infoGainBits"`
 	ReasoningText *string `json:"reasoningText"`
+}
+
+// OutcomeCount is one row from GameOutcomeCounts.
+type OutcomeCount struct {
+	GenIndex   int
+	Won        bool
+	NumGuesses int
+	Count      int
+}
+
+// TurnInfoGainStat is one row from TurnInfoGainStats.
+type TurnInfoGainStat struct {
+	GenIndex     int
+	TurnIndex    int
+	MeanInfoGain float64
+	N            int
+}
+
+// OpeningWordCount is one row from OpeningWordCounts.
+type OpeningWordCount struct {
+	GenIndex int
+	Guess    string
+	Count    int
+}
+
+// ReasoningStat is one row from ReasoningVerbosityStats.
+type ReasoningStat struct {
+	GameID         int64
+	GenIndex       int
+	Won            bool
+	ReasoningChars int
+	NumGuesses     int
+}
+
+// WordDifficultyStat is one row from WordDifficultyStats.
+type WordDifficultyStat struct {
+	Answer string
+	Games  int
+	Wins   int
 }
 
 // Store is the full persistence contract used by handlers and the orchestrator.
@@ -92,4 +134,11 @@ type Store interface {
 	// guesses
 	CreateGuess(ctx context.Context, gu *Guess) (int64, error)
 	ListGuesses(ctx context.Context, gameID int64) ([]*Guess, error)
+
+	// analytics (all filter agent_type = 'llm')
+	GameOutcomeCounts(ctx context.Context, runID int64) ([]OutcomeCount, error)
+	TurnInfoGainStats(ctx context.Context, runID int64) ([]TurnInfoGainStat, error)
+	OpeningWordCounts(ctx context.Context, runID int64) ([]OpeningWordCount, error)
+	ReasoningVerbosityStats(ctx context.Context, runID int64) ([]ReasoningStat, error)
+	WordDifficultyStats(ctx context.Context, runID int64) ([]WordDifficultyStat, error)
 }

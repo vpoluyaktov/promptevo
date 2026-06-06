@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,28 +22,22 @@ import (
 	"promptevo/internal/wordle"
 )
 
-// DefaultStrategyPrompt is the generation-0 strategy prompt (ARCHITECTURE.md §10).
-const DefaultStrategyPrompt = `You are an expert Wordle player. The goal is to find the hidden five-letter
-English word in six or fewer guesses.
+// defaultStrategyPrompt returns the generation-0 strategy prompt for the given
+// max-guesses limit. Intentionally minimal — no strategy hints — so the
+// reflector must discover strategy from scratch based on performance data.
+func defaultStrategyPrompt(maxGuesses int) string {
+	return fmt.Sprintf(`You are a Wordle player. Find the hidden 5-letter English word in %d or fewer guesses.
 
-Rules of the game:
-- Every guess must be a valid five-letter English word.
-- After each guess you receive feedback for each letter position:
-  GREEN  = correct letter in the correct position,
-  YELLOW = letter is in the word but in a different position,
-  GRAY   = letter is not in the word at all.
+Rules:
+- Every guess must be a valid 5-letter English word.
+- After each guess you receive feedback for each letter:
+  GREEN (G) = correct letter, correct position
+  YELLOW (Y) = letter is in the word but wrong position
+  GRAY (X) = letter is not in the word
 
-Strategy:
-- Think step by step. Track which letters are confirmed (green), which are
-  present but misplaced (yellow), and which are excluded (gray).
-- Never reuse a gray letter, and respect every green position and known
-  yellow constraint in your next guess.
-- Prefer guesses that test many new common letters early, then converge on
-  the answer as constraints accumulate.
-
-Respond with brief reasoning, then end your reply with a line in exactly this
-format:
-GUESS: <WORD>`
+Respond with your reasoning, then end with:
+GUESS: <WORD>`, maxGuesses)
+}
 
 // RunConfig is the subset of run parameters stored in config_json.
 type RunConfig struct {
@@ -61,6 +56,7 @@ type Event struct {
 	Guess         string   `json:"guess,omitempty"`
 	Feedback      string   `json:"feedback,omitempty"`
 	InfoGain      float64  `json:"infoGain,omitempty"`
+	Reasoning     string   `json:"reasoning,omitempty"`
 	Won           *bool    `json:"won,omitempty"`
 	NumGuesses    int      `json:"numGuesses,omitempty"`
 	Answer        string   `json:"answer,omitempty"`
@@ -77,9 +73,6 @@ type Event struct {
 
 // boolPtr returns a pointer to b.
 func boolPtr(b bool) *bool { return &b }
-
-// float64Ptr returns a pointer to f.
-func float64Ptr(f float64) *float64 { return &f }
 
 // ─── Hub ──────────────────────────────────────────────────────────────────────
 
@@ -224,7 +217,7 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 	// Build the seeded word sample (same sample used every generation).
 	sample := sampleWords(o.Lists.Answers, run.Seed, run.WordSampleSize)
 
-	currentPrompt := DefaultStrategyPrompt
+	currentPrompt := defaultStrategyPrompt(run.MaxGuesses)
 	var solveRates []float64
 
 	for genIdx := 0; genIdx < run.Generations; genIdx++ {
@@ -249,8 +242,11 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 			violations int
 		}
 		results := make([]gameResult, 0, run.GamesPerGen)
-		totalTokens := 0
+		playerTokens := 0
+		reflectorTokens := 0
 		var failedSamples []string
+		var wonSamples []string
+		winByTurn := make(map[int]int)
 
 		gameWords := sample
 		if len(gameWords) > run.GamesPerGen {
@@ -258,7 +254,7 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 		}
 
 		for _, answer := range gameWords {
-			gr, err := o.playLLMGame(ctx, a, runID, genIdx, currentPrompt, answer)
+			gr, err := o.playLLMGame(ctx, a, runID, genIdx, currentPrompt, answer, run.MaxGuesses)
 			if err != nil {
 				// Non-fatal: log and continue.
 				log.Printf("run %d gen %d: LLM game error for %q: %v", runID, genIdx, answer, err)
@@ -270,8 +266,13 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 				infoGain:   gr.infoGain,
 				violations: gr.violations,
 			})
-			totalTokens += gr.tokensUsed
-			if !gr.won && len(failedSamples) < 3 {
+			playerTokens += gr.tokensUsed
+			if gr.won {
+				winByTurn[gr.numGuesses]++
+				if len(wonSamples) < 2 {
+					wonSamples = append(wonSamples, gr.transcript)
+				}
+			} else if len(failedSamples) < 3 {
 				failedSamples = append(failedSamples, gr.transcript)
 			}
 		}
@@ -285,7 +286,7 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 			}
 			for _, player := range players {
 				for _, answer := range gameWords {
-					if err := o.playBaselineGame(ctx, runID, genIdx, answer, player); err != nil {
+					if err := o.playBaselineGame(ctx, runID, genIdx, answer, player, run.MaxGuesses); err != nil {
 						log.Printf("run %d baseline %s %q: %v", runID, player.Name(), answer, err)
 					}
 				}
@@ -321,16 +322,31 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 		var reflectionText *string
 
 		if genIdx < run.Generations-1 {
+			// Build win-by-turn distribution string.
+			var distParts []string
+			for t := 1; t <= run.MaxGuesses; t++ {
+				if n := winByTurn[t]; n > 0 {
+					distParts = append(distParts, fmt.Sprintf("turn %d: %d", t, n))
+				}
+			}
+			lostCount := len(results) - int(solveRate*float64(len(results))+0.5)
+			if lostCount > 0 {
+				distParts = append(distParts, fmt.Sprintf("lost: %d", lostCount))
+			}
+			winDist := strings.Join(distParts, " | ")
+
 			stats := reflector.GenerationStats{
-				GenIndex:      genIdx,
-				SolveRate:     solveRate,
-				MeanGuesses:   meanGuesses,
-				MeanInfoGain:  meanInfoGain,
-				ViolationRate: violationRate,
-				FailedSamples: failedSamples,
+				GenIndex:        genIdx,
+				SolveRate:       solveRate,
+				MeanGuesses:     meanGuesses,
+				MeanInfoGain:    meanInfoGain,
+				ViolationRate:   violationRate,
+				WinDistribution: winDist,
+				FailedSamples:   failedSamples,
+				WonSamples:      wonSamples,
 			}
 			np, refText, ok, refUsage, refErr := refl.Reflect(ctx, currentPrompt, stats)
-			totalTokens += refUsage.InputTokens + refUsage.OutputTokens
+			reflectorTokens += refUsage.InputTokens + refUsage.OutputTokens
 			if refErr != nil {
 				log.Printf("run %d gen %d: reflector error: %v", runID, genIdx, refErr)
 			}
@@ -352,7 +368,9 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 		gen.MeanGuesses = &meanGuesses
 		gen.MeanInfoGain = &meanInfoGain
 		gen.ViolationRate = &violationRate
-		gen.TokensUsed = totalTokens
+		gen.PlayerTokens = playerTokens
+		gen.ReflectorTokens = reflectorTokens
+		gen.TokensUsed = playerTokens + reflectorTokens
 		gen.ReflectionText = reflectionText
 		if err := o.Store.UpdateGenerationStats(ctx, gen); err != nil {
 			log.Printf("run %d gen %d: update stats: %v", runID, genIdx, err)
@@ -367,7 +385,7 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 			MeanInfoGain:  &meanInfoGain,
 			ViolationRate: &violationRate,
 			Prompt:        nextPrompt,
-			TokensUsed:    totalTokens,
+			TokensUsed:    gen.TokensUsed,
 		})
 
 		currentPrompt = nextPrompt
@@ -403,8 +421,8 @@ type llmGameResult struct {
 }
 
 // playLLMGame plays a full game with the LLM agent, persists it, and emits SSE events.
-func (o *Orchestrator) playLLMGame(ctx context.Context, a *agent.Agent, runID int64, genIdx int, prompt, answer string) (llmGameResult, error) {
-	g := wordle.NewGame(answer)
+func (o *Orchestrator) playLLMGame(ctx context.Context, a *agent.Agent, runID int64, genIdx int, prompt, answer string, maxGuesses int) (llmGameResult, error) {
+	g := wordle.NewGameWithMaxTurns(answer, maxGuesses)
 	storeGame := &store.Game{
 		RunID:     runID,
 		GenIndex:  genIdx,
@@ -455,7 +473,14 @@ func (o *Orchestrator) playLLMGame(ctx context.Context, a *agent.Agent, runID in
 		totalInfoGain += bits
 
 		fbStr := fb.String()
-		transcriptLines = append(transcriptLines, fmt.Sprintf("  Turn %d: %s → %s", turnIdx+1, guess, fbStr))
+		transcriptLines = append(transcriptLines, fmt.Sprintf("  Turn %d: %s → %s", turnIdx+1, strings.ToUpper(guess), fbStr))
+		if reasoning != "" {
+			r := strings.TrimSpace(strings.ReplaceAll(reasoning, "\n", " "))
+			if len(r) > 250 {
+				r = r[:250] + "…"
+			}
+			transcriptLines = append(transcriptLines, fmt.Sprintf("    thinking: %s", r))
+		}
 
 		// Persist guess.
 		var reasoningPtr *string
@@ -476,13 +501,14 @@ func (o *Orchestrator) playLLMGame(ctx context.Context, a *agent.Agent, runID in
 
 		// Emit guess SSE event.
 		o.Hub.Publish(runID, Event{
-			Type:     "guess",
-			GameID:   gameID,
-			GenIndex: genIdx,
-			Turn:     turnIdx,
-			Guess:    guess,
-			Feedback: fbStr,
-			InfoGain: bits,
+			Type:      "guess",
+			GameID:    gameID,
+			GenIndex:  genIdx,
+			Turn:      turnIdx,
+			Guess:     guess,
+			Feedback:  fbStr,
+			InfoGain:  bits,
+			Reasoning: reasoning,
 		})
 	}
 
@@ -526,8 +552,8 @@ func joinLines(lines []string) string {
 }
 
 // playBaselineGame plays a full game with a baseline player and persists it.
-func (o *Orchestrator) playBaselineGame(ctx context.Context, runID int64, genIdx int, answer string, player baselines.Player) error {
-	g := wordle.NewGame(answer)
+func (o *Orchestrator) playBaselineGame(ctx context.Context, runID int64, genIdx int, answer string, player baselines.Player, maxGuesses int) error {
+	g := wordle.NewGameWithMaxTurns(answer, maxGuesses)
 	storeGame := &store.Game{
 		RunID:     runID,
 		GenIndex:  genIdx,

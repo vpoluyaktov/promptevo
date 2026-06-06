@@ -24,19 +24,24 @@ type MockStore struct {
 	nextGuessID int64
 
 	// Error injection — set before the call that should fail.
-	ErrMigrate            error
-	ErrCreateRun          error
-	ErrGetRun             error
-	ErrListRuns           error
-	ErrUpdateRunStatus    error
-	ErrDeleteRun          error
-	ErrCreateGeneration   error
-	ErrUpdateGenStats     error
-	ErrListGenerations    error
-	ErrCreateGame         error
-	ErrListGames          error
-	ErrCreateGuess        error
-	ErrListGuesses        error
+	ErrMigrate                  error
+	ErrCreateRun                error
+	ErrGetRun                   error
+	ErrListRuns                 error
+	ErrUpdateRunStatus          error
+	ErrDeleteRun                error
+	ErrCreateGeneration         error
+	ErrUpdateGenStats           error
+	ErrListGenerations          error
+	ErrCreateGame               error
+	ErrListGames                error
+	ErrCreateGuess              error
+	ErrListGuesses              error
+	ErrGameOutcomeCounts        error
+	ErrTurnInfoGainStats        error
+	ErrOpeningWordCounts        error
+	ErrReasoningVerbosityStats  error
+	ErrWordDifficultyStats      error
 }
 
 // NewMockStore returns an empty MockStore ready for use.
@@ -275,5 +280,250 @@ func (m *MockStore) ListGuesses(_ context.Context, gameID int64) ([]*Guess, erro
 		out[i] = &gc
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TurnIndex < out[j].TurnIndex })
+	return out, nil
+}
+
+// --- analytics ---
+
+// GameOutcomeCounts aggregates game outcomes for LLM games in-memory, mirroring
+// the SQL GROUP BY gen_index, won, num_guesses.
+func (m *MockStore) GameOutcomeCounts(_ context.Context, runID int64) ([]OutcomeCount, error) {
+	if m.ErrGameOutcomeCounts != nil {
+		return nil, m.ErrGameOutcomeCounts
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	type key struct {
+		GenIndex   int
+		Won        bool
+		NumGuesses int
+	}
+	counts := make(map[key]int)
+	for _, g := range m.games[runID] {
+		if g.AgentType != "llm" {
+			continue
+		}
+		k := key{g.GenIndex, g.Won, g.NumGuesses}
+		counts[k]++
+	}
+
+	out := make([]OutcomeCount, 0, len(counts))
+	for k, cnt := range counts {
+		out = append(out, OutcomeCount{
+			GenIndex:   k.GenIndex,
+			Won:        k.Won,
+			NumGuesses: k.NumGuesses,
+			Count:      cnt,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].GenIndex != out[j].GenIndex {
+			return out[i].GenIndex < out[j].GenIndex
+		}
+		wi, wj := 0, 0
+		if out[i].Won {
+			wi = 1
+		}
+		if out[j].Won {
+			wj = 1
+		}
+		if wi != wj {
+			return wi < wj
+		}
+		return out[i].NumGuesses < out[j].NumGuesses
+	})
+	return out, nil
+}
+
+// TurnInfoGainStats computes mean info gain per (gen, turn) for LLM games.
+func (m *MockStore) TurnInfoGainStats(_ context.Context, runID int64) ([]TurnInfoGainStat, error) {
+	if m.ErrTurnInfoGainStats != nil {
+		return nil, m.ErrTurnInfoGainStats
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	type key struct {
+		GenIndex  int
+		TurnIndex int
+	}
+	type acc struct {
+		sum float64
+		n   int
+	}
+	accs := make(map[key]*acc)
+
+	for _, g := range m.games[runID] {
+		if g.AgentType != "llm" {
+			continue
+		}
+		for _, gu := range m.guesses[g.ID] {
+			k := key{g.GenIndex, gu.TurnIndex}
+			if accs[k] == nil {
+				accs[k] = &acc{}
+			}
+			accs[k].sum += gu.InfoGainBits
+			accs[k].n++
+		}
+	}
+
+	out := make([]TurnInfoGainStat, 0, len(accs))
+	for k, a := range accs {
+		out = append(out, TurnInfoGainStat{
+			GenIndex:     k.GenIndex,
+			TurnIndex:    k.TurnIndex,
+			MeanInfoGain: a.sum / float64(a.n),
+			N:            a.n,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].GenIndex != out[j].GenIndex {
+			return out[i].GenIndex < out[j].GenIndex
+		}
+		return out[i].TurnIndex < out[j].TurnIndex
+	})
+	return out, nil
+}
+
+// OpeningWordCounts counts first-turn guesses per gen for LLM games.
+func (m *MockStore) OpeningWordCounts(_ context.Context, runID int64) ([]OpeningWordCount, error) {
+	if m.ErrOpeningWordCounts != nil {
+		return nil, m.ErrOpeningWordCounts
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	type key struct {
+		GenIndex int
+		Guess    string
+	}
+	counts := make(map[key]int)
+
+	for _, g := range m.games[runID] {
+		if g.AgentType != "llm" {
+			continue
+		}
+		for _, gu := range m.guesses[g.ID] {
+			if gu.TurnIndex == 0 {
+				k := key{g.GenIndex, gu.Guess}
+				counts[k]++
+			}
+		}
+	}
+
+	out := make([]OpeningWordCount, 0, len(counts))
+	for k, cnt := range counts {
+		out = append(out, OpeningWordCount{
+			GenIndex: k.GenIndex,
+			Guess:    k.Guess,
+			Count:    cnt,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].GenIndex != out[j].GenIndex {
+			return out[i].GenIndex < out[j].GenIndex
+		}
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count // descending count
+		}
+		return out[i].Guess < out[j].Guess
+	})
+	return out, nil
+}
+
+// ReasoningVerbosityStats computes total reasoning chars per game for LLM games.
+func (m *MockStore) ReasoningVerbosityStats(_ context.Context, runID int64) ([]ReasoningStat, error) {
+	if m.ErrReasoningVerbosityStats != nil {
+		return nil, m.ErrReasoningVerbosityStats
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	type gameKey struct {
+		id       int64
+		genIndex int
+	}
+	var gameList []gameKey
+	gameMap := make(map[int64]*Game)
+
+	for _, g := range m.games[runID] {
+		if g.AgentType != "llm" {
+			continue
+		}
+		gameList = append(gameList, gameKey{g.ID, g.GenIndex})
+		gameMap[g.ID] = g
+	}
+	sort.Slice(gameList, func(i, j int) bool {
+		if gameList[i].genIndex != gameList[j].genIndex {
+			return gameList[i].genIndex < gameList[j].genIndex
+		}
+		return gameList[i].id < gameList[j].id
+	})
+
+	out := make([]ReasoningStat, 0, len(gameList))
+	for _, gk := range gameList {
+		g := gameMap[gk.id]
+		chars := 0
+		for _, gu := range m.guesses[g.ID] {
+			if gu.ReasoningText != nil {
+				chars += len([]rune(*gu.ReasoningText))
+			}
+		}
+		out = append(out, ReasoningStat{
+			GameID:         g.ID,
+			GenIndex:       g.GenIndex,
+			Won:            g.Won,
+			ReasoningChars: chars,
+			NumGuesses:     g.NumGuesses,
+		})
+	}
+	return out, nil
+}
+
+// WordDifficultyStats computes per-answer win rates for LLM games, sorted
+// hardest-first (ascending win rate, then ascending answer).
+func (m *MockStore) WordDifficultyStats(_ context.Context, runID int64) ([]WordDifficultyStat, error) {
+	if m.ErrWordDifficultyStats != nil {
+		return nil, m.ErrWordDifficultyStats
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	type acc struct {
+		games int
+		wins  int
+	}
+	accs := make(map[string]*acc)
+
+	for _, g := range m.games[runID] {
+		if g.AgentType != "llm" {
+			continue
+		}
+		if accs[g.Answer] == nil {
+			accs[g.Answer] = &acc{}
+		}
+		accs[g.Answer].games++
+		if g.Won {
+			accs[g.Answer].wins++
+		}
+	}
+
+	out := make([]WordDifficultyStat, 0, len(accs))
+	for answer, a := range accs {
+		out = append(out, WordDifficultyStat{
+			Answer: answer,
+			Games:  a.games,
+			Wins:   a.wins,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		ri := float64(out[i].Wins) / float64(out[i].Games)
+		rj := float64(out[j].Wins) / float64(out[j].Games)
+		if ri != rj {
+			return ri < rj
+		}
+		return out[i].Answer < out[j].Answer
+	})
 	return out, nil
 }

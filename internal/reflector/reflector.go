@@ -19,13 +19,14 @@ const (
 
 // GenerationStats is the aggregate fed to the reflector.
 type GenerationStats struct {
-	GenIndex      int
-	SolveRate     float64
-	MeanGuesses   float64
-	MeanInfoGain  float64
-	ViolationRate float64
-	// FailedSamples are a few representative lost games (answer + guess/feedback).
-	FailedSamples []string
+	GenIndex        int
+	SolveRate       float64
+	MeanGuesses     float64
+	MeanInfoGain    float64
+	ViolationRate   float64
+	WinDistribution string   // e.g. "turn 1: 2 | turn 2: 4 | lost: 4"
+	FailedSamples   []string // up to 3 lost games with per-turn reasoning
+	WonSamples      []string // up to 2 won games showing successful constraint tracking
 }
 
 // TokenUsage records input/output tokens for one LLM call.
@@ -44,15 +45,23 @@ type Reflector struct {
 // Reflect returns the next strategy prompt. When the delimited block cannot be
 // parsed, ok is false and the caller reuses currentPrompt (ARCHITECTURE.md §9.5).
 func (r *Reflector) Reflect(ctx context.Context, currentPrompt string, stats GenerationStats) (newPrompt string, reflection string, ok bool, usage TokenUsage, err error) {
-	sysMsg := `You are an AI research assistant helping improve a Wordle-playing agent's strategy.
-Your job is to analyse the agent's performance and rewrite its strategy prompt to improve future results.
+	sysMsg := `You are an AI research assistant improving a Wordle-playing agent's strategy prompt.
 
-You MUST output the improved strategy prompt wrapped in these exact delimiters (with no other text between them):
+Your job: analyse performance data and make SURGICAL changes to the strategy content only.
+
+STRICT RULES:
+- Change ONLY game strategy — opening word choices, constraint tracking, information gain, elimination tactics
+- Do NOT rewrite grammar, punctuation, sentence structure, or phrasing that is not about strategy
+- Do NOT add motivational language, personality, or meta-commentary
+- Do NOT restructure sections that already work
+- Every change must be directly justified by a specific failure pattern in the data
+
+Output the improved prompt wrapped in these exact delimiters:
 ---PROMPT_START---
-<your improved strategy prompt here>
+<improved strategy prompt>
 ---PROMPT_END---
 
-The improved prompt should be between 100 and 4000 characters.`
+The prompt must be 100–4000 characters.`
 
 	userMsg := buildReflectorUserMessage(currentPrompt, stats)
 
@@ -110,14 +119,26 @@ func ParsePrompt(raw string) (prompt string, ok bool) {
 func buildReflectorUserMessage(currentPrompt string, stats GenerationStats) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("## Generation %d Performance Report\n\n", stats.GenIndex))
+	sb.WriteString(fmt.Sprintf("## Generation %d Performance\n\n", stats.GenIndex))
 	sb.WriteString(fmt.Sprintf("- Solve rate: %.1f%%\n", stats.SolveRate*100))
-	sb.WriteString(fmt.Sprintf("- Mean guesses: %.2f (lower is better; target ≤4.0)\n", stats.MeanGuesses))
-	sb.WriteString(fmt.Sprintf("- Mean information gain: %.2f bits per game\n", stats.MeanInfoGain))
-	sb.WriteString(fmt.Sprintf("- Violation rate: %.1f%% (invalid/contradictory guesses)\n\n", stats.ViolationRate*100))
+	sb.WriteString(fmt.Sprintf("- Mean guesses used: %.2f\n", stats.MeanGuesses))
+	sb.WriteString(fmt.Sprintf("- Mean information gain: %.2f bits/game\n", stats.MeanInfoGain))
+	sb.WriteString(fmt.Sprintf("- Constraint violation rate: %.1f%%\n", stats.ViolationRate*100))
+	if stats.WinDistribution != "" {
+		sb.WriteString(fmt.Sprintf("- Win distribution: %s\n", stats.WinDistribution))
+	}
+	sb.WriteString("\n")
+
+	if len(stats.WonSamples) > 0 {
+		sb.WriteString("## Examples of Won Games (successful constraint tracking)\n\n")
+		for _, sample := range stats.WonSamples {
+			sb.WriteString(sample)
+			sb.WriteString("\n\n")
+		}
+	}
 
 	if len(stats.FailedSamples) > 0 {
-		sb.WriteString("## Representative Failed Games\n\n")
+		sb.WriteString("## Examples of Lost Games (diagnose what went wrong)\n\n")
 		for _, sample := range stats.FailedSamples {
 			sb.WriteString(sample)
 			sb.WriteString("\n\n")
@@ -130,11 +151,12 @@ func buildReflectorUserMessage(currentPrompt string, stats GenerationStats) stri
 	sb.WriteString("\n```\n\n")
 
 	sb.WriteString("## Your Task\n\n")
-	sb.WriteString("1. Diagnose the main failure modes in the performance data above.\n")
-	sb.WriteString("2. Rewrite the strategy prompt to address these weaknesses.\n")
-	sb.WriteString("3. Output your improved prompt between the required delimiters:\n\n")
+	sb.WriteString("1. Identify specific strategic failures in the lost game examples above.\n")
+	sb.WriteString("2. Make targeted changes to the strategy content only — fix the specific tactical weaknesses you identified.\n")
+	sb.WriteString("3. Do NOT change grammar, punctuation, or phrasing. Only change strategy instructions.\n")
+	sb.WriteString("4. Output the updated prompt between the required delimiters:\n\n")
 	sb.WriteString("---PROMPT_START---\n")
-	sb.WriteString("<improved strategy prompt>\n")
+	sb.WriteString("<updated strategy prompt>\n")
 	sb.WriteString("---PROMPT_END---\n")
 
 	return sb.String()

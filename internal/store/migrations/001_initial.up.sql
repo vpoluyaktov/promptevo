@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS runs (
     generations INTEGER NOT NULL,
     games_per_gen INTEGER NOT NULL,
     word_sample_size INTEGER NOT NULL,
+    max_guesses INTEGER NOT NULL DEFAULT 4,
     status TEXT NOT NULL DEFAULT 'pending',
     config_json TEXT NOT NULL DEFAULT '{}'
 );
@@ -23,7 +24,9 @@ CREATE TABLE IF NOT EXISTS generations (
     mean_guesses REAL,
     mean_info_gain REAL,
     violation_rate REAL,
-    tokens_used INTEGER NOT NULL DEFAULT 0
+    tokens_used INTEGER NOT NULL DEFAULT 0,
+    player_tokens INTEGER NOT NULL DEFAULT 0,
+    reflector_tokens INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS games (
