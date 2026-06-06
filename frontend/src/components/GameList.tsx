@@ -88,9 +88,9 @@ export default function GameList({ games }: Props) {
               <th>Answer</th>
               <th>Won</th>
               <th>Guesses</th>
-              <th>Info Gain</th>
-              <th>Violations</th>
-              <th>Agent</th>
+              <th className="col-game-hide">Info Gain</th>
+              <th className="col-game-hide">Violations</th>
+              <th className="col-game-hide">Agent</th>
             </tr>
           </thead>
           <tbody>
@@ -100,9 +100,9 @@ export default function GameList({ games }: Props) {
                 <td style={{ textTransform: 'uppercase', fontFamily: 'monospace', fontWeight: 600 }}>{g.answer}</td>
                 <td>{g.won ? <span style={{ color: 'var(--accent)' }}>✓</span> : <span style={{ color: 'var(--danger)' }}>✗</span>}</td>
                 <td>{g.numGuesses}</td>
-                <td>{g.infoGainTotal.toFixed(2)}</td>
-                <td>{g.violations}</td>
-                <td><span className="badge badge-stable" style={{ background: '#f5f5f5', color: 'var(--text-secondary)' }}>{g.agentType}</span></td>
+                <td className="col-game-hide">{g.infoGainTotal.toFixed(2)}</td>
+                <td className="col-game-hide">{g.violations}</td>
+                <td className="col-game-hide"><span className="badge badge-stable" style={{ background: '#f5f5f5', color: 'var(--text-secondary)' }}>{g.agentType}</span></td>
               </tr>
             ))}
           </tbody>

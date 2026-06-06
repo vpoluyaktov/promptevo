@@ -122,7 +122,7 @@ export default function LiveRun() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 24 }}>
+      <div className="grid-2 mb-24">
         {/* Left: Wordle board */}
         <div className="card">
           <h3 style={{ marginBottom: 16, fontWeight: 600, fontSize: '1rem' }}>Current Game</h3>

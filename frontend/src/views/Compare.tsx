@@ -93,7 +93,7 @@ export default function Compare() {
       )}
 
       {!loading && allRuns.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 24 }}>
+        <div className="compare-layout">
           {/* Run selector */}
           <div className="card" style={{ padding: 0, alignSelf: 'start' }}>
             <div style={{ padding: '14px 16px', borderBottom: '1px solid #e0e0e0', fontWeight: 600, fontSize: '0.9rem' }}>

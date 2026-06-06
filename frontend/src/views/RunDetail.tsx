@@ -53,7 +53,7 @@ function PromptTimeline({ generations }: PromptTabProps) {
         </span>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+      <div className="grid-2">
         <div>
           <div className="prompt-card">
             <div className="prompt-card-header">Strategy Prompt — Gen {cur.genIndex}</div>

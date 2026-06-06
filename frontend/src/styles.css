@@ -302,6 +302,10 @@ tr.clickable:hover td { background: var(--bg-secondary); }
 .big-stat { font-size: 2.5rem; font-weight: 700; color: var(--text); line-height: 1; }
 .big-stat-label { font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-top: 4px; }
 
+/* Reusable responsive grids */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.compare-layout { display: grid; grid-template-columns: 300px 1fr; gap: 24px; }
+
 /* Mobile ≤600px */
 @media (max-width: 600px) {
   .nav { padding: 0 12px; gap: 12px; }
@@ -319,4 +323,7 @@ tr.clickable:hover td { background: var(--bg-secondary); }
   .wordle-board { grid-template-rows: repeat(6, 52px); }
   .wordle-row { grid-template-columns: repeat(5, 52px); }
   .tile { width: 52px; height: 52px; font-size: 1.6rem; }
+
+  .grid-2, .compare-layout { grid-template-columns: 1fr; }
+  .col-game-hide { display: none; }
 }
