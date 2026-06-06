@@ -731,11 +731,11 @@ left-to-right.
 | guess  | answer | feedback | why |
 |--------|--------|----------|-----|
 | `crane`| `crane`| `GGGGG`  | all exact. |
-| `slate`| `crane`| `XXYXG`  | a→Yellow (in word, wrong spot), e→Green; s,l,t absent. |
+| `slate`| `crane`| `XXGXG`  | a (pos2) and e (pos4) match exactly → Green; s,l,t absent. |
 | `babes`| `abbey`| `YYGGX`  | pos2 b & pos3 e green; one b and the a yellow; s gray. |
 | `speed`| `abide`| `XXYXY`  | first e Yellow (budget=1), second e Gray (budget spent), d Yellow. |
 | `geese`| `eject`| `XYXXY`*` | answer has two e's: greens first then yellows consume the 2-budget. |
-| `aaaaa`| `crane`| `XGXXX`  | only the positional-match a is green; no other a budget remains. |
+| `aaaaa`| `crane`| `XXGXX`  | only the positional-match a (pos2) is green; no other a budget remains. |
 | `eevee`| `crane`| `YXXXX`  | answer has one e (pos4, not matched by any guess pos here)… see note. |
 
 > Compute these with the reference algorithm; do **not** hand-wave. The
