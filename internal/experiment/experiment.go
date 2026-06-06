@@ -6,6 +6,7 @@ package experiment
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand/v2"
@@ -149,26 +150,42 @@ type Orchestrator struct {
 	Hub             *Hub
 }
 
-// StartRun launches the run goroutine for runID. It looks up the run from the
-// store, parses config, and drives the full generation/game loop asynchronously.
-func (o *Orchestrator) StartRun(runID int64) {
+// StartRun launches the run goroutine for runID. ctx should be a cancellable
+// context — calling its cancel function stops the experiment. onDone is called
+// when the goroutine exits (successful, failed, or cancelled).
+func (o *Orchestrator) StartRun(ctx context.Context, runID int64, onDone func()) {
 	go func() {
-		ctx := context.Background()
-		if err := o.runExperiment(ctx, runID); err != nil {
-			log.Printf("run %d failed: %v", runID, err)
-			_ = o.Store.UpdateRunStatus(ctx, runID, "failed")
-			o.Hub.Publish(runID, Event{
-				Type:   "error",
-				RunID:  runID,
-				Message: fmt.Sprintf("run failed: %v", err),
-			})
-			o.Hub.Publish(runID, Event{
-				Type:        "run_end",
-				RunID:       runID,
-				Status:      "failed",
-				Convergence: "improving",
-			})
+		defer onDone()
+		// Use a separate background context for cleanup writes so that a
+		// cancelled ctx doesn't prevent the final status update.
+		cleanupCtx := context.Background()
+		err := o.runExperiment(ctx, runID)
+		if err == nil {
+			return
 		}
+		if errors.Is(err, context.Canceled) {
+			log.Printf("run %d: stopped by request", runID)
+			_ = o.Store.UpdateRunStatus(cleanupCtx, runID, "stopped")
+			o.Hub.Publish(runID, Event{
+				Type:   "run_end",
+				RunID:  runID,
+				Status: "stopped",
+			})
+			return
+		}
+		log.Printf("run %d failed: %v", runID, err)
+		_ = o.Store.UpdateRunStatus(cleanupCtx, runID, "failed")
+		o.Hub.Publish(runID, Event{
+			Type:    "error",
+			RunID:   runID,
+			Message: fmt.Sprintf("run failed: %v", err),
+		})
+		o.Hub.Publish(runID, Event{
+			Type:        "run_end",
+			RunID:       runID,
+			Status:      "failed",
+			Convergence: "improving",
+		})
 	}()
 }
 

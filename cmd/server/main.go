@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -141,16 +142,26 @@ func (s *server) isValidModel(m string) bool {
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 type server struct {
-	cfg       config
-	store     store.Store
-	hub       *experiment.Hub
-	orch      *experiment.Orchestrator
-	lists     *wordle.WordLists
-	authToken string // empty when auth is disabled
+	cfg         config
+	store       store.Store
+	hub         *experiment.Hub
+	orch        *experiment.Orchestrator
+	lists       *wordle.WordLists
+	authToken   string // empty when auth is disabled
+	mu          sync.Mutex
+	cancelFuncs map[int64]context.CancelFunc
 }
 
 func newServer(cfg config, st store.Store, lists *wordle.WordLists, hub *experiment.Hub, orch *experiment.Orchestrator, authToken string) *server {
-	return &server{cfg: cfg, store: st, hub: hub, orch: orch, lists: lists, authToken: authToken}
+	return &server{
+		cfg:         cfg,
+		store:       st,
+		hub:         hub,
+		orch:        orch,
+		lists:       lists,
+		authToken:   authToken,
+		cancelFuncs: make(map[int64]context.CancelFunc),
+	}
 }
 
 // activeRunCount counts runs with status "running" or "pending" in the store.
@@ -198,6 +209,7 @@ func (s *server) buildRoutes() http.Handler {
 			r.Get("/runs", s.handleListRuns)
 			r.Post("/runs", s.handleCreateRun)
 			r.Get("/runs/{id}", s.handleGetRun)
+			r.Post("/runs/{id}/stop", s.handleStopRun)
 			r.Delete("/runs/{id}", s.handleDeleteRun)
 			r.Get("/runs/{id}/generations", s.handleListGenerations)
 			r.Get("/runs/{id}/games", s.handleListGames)
@@ -397,8 +409,19 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Launch experiment goroutine (StartRun is non-blocking).
-	s.orch.StartRun(id)
+	// Launch experiment goroutine with a cancellable context so the run can
+	// be stopped via POST /api/runs/{id}/stop.
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.cancelFuncs[id] = cancel
+	s.mu.Unlock()
+
+	s.orch.StartRun(runCtx, id, func() {
+		s.mu.Lock()
+		delete(s.cancelFuncs, id)
+		s.mu.Unlock()
+		cancel() // safe to call twice; frees context resources
+	})
 
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -463,6 +486,42 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
+// handleStopRun handles POST /api/runs/{id}/stop.
+// It cancels the experiment goroutine for a running run and returns 200 {"status":"stopped"}.
+func (s *server) handleStopRun(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+
+	run, err := s.store.GetRun(r.Context(), id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "run not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get run")
+		return
+	}
+	if run.Status != "running" {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("run is not running (status: %s)", run.Status))
+		return
+	}
+
+	s.mu.Lock()
+	cancel, active := s.cancelFuncs[id]
+	s.mu.Unlock()
+	if !active {
+		// Status is "running" in the DB but the goroutine is gone (e.g. server
+		// restarted). Treat as not stoppable.
+		writeError(w, http.StatusBadRequest, "run not active")
+		return
+	}
+	cancel()
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "stopped"})
 }
 
 func (s *server) handleListGenerations(w http.ResponseWriter, r *http.Request) {
@@ -556,7 +615,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	flusher, canFlush := w.(http.Flusher)
 
 	// Already finished — replay terminal run_end and close.
-	if run.Status == "completed" || run.Status == "failed" {
+	if run.Status == "completed" || run.Status == "failed" || run.Status == "stopped" {
 		gens, _ := s.store.ListGenerations(r.Context(), id)
 		var rates []float64
 		for _, g := range gens {

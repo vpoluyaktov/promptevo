@@ -55,6 +55,10 @@ export const api = {
     })
   },
 
+  stopRun(id: number): Promise<{ stopped: boolean }> {
+    return request(`/runs/${id}/stop`, { method: 'POST' })
+  },
+
   deleteRun(id: number): Promise<{ deleted: boolean }> {
     return request(`/runs/${id}`, { method: 'DELETE' })
   },

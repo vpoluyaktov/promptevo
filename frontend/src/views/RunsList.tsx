@@ -11,18 +11,61 @@ function fmt(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
+type InFlight = Record<number, 'stopping' | 'deleting' | undefined>
+
 export default function RunsList() {
   const [runs, setRuns] = useState<Run[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
+  const [actionError, setActionError] = useState<Record<number, string | undefined>>({})
+  const [inFlight, setInFlight] = useState<InFlight>({})
   const navigate = useNavigate()
 
-  useEffect(() => {
-    api.listRuns()
+  function fetchRuns() {
+    return api.listRuns()
       .then((r) => setRuns(r.runs))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load runs'))
       .finally(() => setLoading(false))
-  }, [])
+  }
+
+  useEffect(() => { fetchRuns() }, [])
+
+  async function handleStop(e: React.MouseEvent, run: Run) {
+    e.stopPropagation()
+    if (!window.confirm('Stop this run?')) return
+    setInFlight((prev) => ({ ...prev, [run.id]: 'stopping' }))
+    setActionError((prev) => ({ ...prev, [run.id]: undefined }))
+    try {
+      await api.stopRun(run.id)
+      setLoading(true)
+      await fetchRuns()
+    } catch (err) {
+      setActionError((prev) => ({
+        ...prev,
+        [run.id]: err instanceof Error ? err.message : 'Stop failed',
+      }))
+    } finally {
+      setInFlight((prev) => ({ ...prev, [run.id]: undefined }))
+    }
+  }
+
+  async function handleDelete(e: React.MouseEvent, run: Run) {
+    e.stopPropagation()
+    if (!window.confirm(`Delete run #${run.id} and all its data? This cannot be undone.`)) return
+    setInFlight((prev) => ({ ...prev, [run.id]: 'deleting' }))
+    setActionError((prev) => ({ ...prev, [run.id]: undefined }))
+    try {
+      await api.deleteRun(run.id)
+      setRuns((prev) => prev.filter((r) => r.id !== run.id))
+    } catch (err) {
+      setActionError((prev) => ({
+        ...prev,
+        [run.id]: err instanceof Error ? err.message : 'Delete failed',
+      }))
+    } finally {
+      setInFlight((prev) => ({ ...prev, [run.id]: undefined }))
+    }
+  }
 
   return (
     <div className="page">
@@ -56,20 +99,69 @@ export default function RunsList() {
                   <th>Seed</th>
                   <th>Gens</th>
                   <th>Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {runs.map((r) => (
-                  <tr key={r.id} className="clickable" onClick={() => navigate(`/runs/${r.id}`)}>
-                    <td style={{ fontWeight: 600 }}>#{r.id}</td>
-                    <td className="text-secondary">{fmt(r.createdAt)}</td>
-                    <td className="font-mono text-sm">{r.playerModel}</td>
-                    <td className="font-mono text-sm">{r.reflectorModel}</td>
-                    <td>{r.seed}</td>
-                    <td>{r.generations}</td>
-                    <td>{statusBadge(r.status)}</td>
-                  </tr>
-                ))}
+                {runs.map((r) => {
+                  const busy = inFlight[r.id]
+                  return (
+                    <tr key={r.id} className="clickable" onClick={() => navigate(`/runs/${r.id}`)}>
+                      <td style={{ fontWeight: 600 }}>#{r.id}</td>
+                      <td className="text-secondary">{fmt(r.createdAt)}</td>
+                      <td className="font-mono text-sm">{r.playerModel}</td>
+                      <td className="font-mono text-sm">{r.reflectorModel}</td>
+                      <td>{r.seed}</td>
+                      <td>{r.generations}</td>
+                      <td>{statusBadge(r.status)}</td>
+                      <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                        {r.status === 'running' && (
+                          <button
+                            disabled={!!busy}
+                            onClick={(e) => handleStop(e, r)}
+                            style={{
+                              border: '1px solid #e07b00',
+                              color: busy === 'stopping' ? '#aaa' : '#e07b00',
+                              background: 'white',
+                              borderRadius: 4,
+                              padding: '2px 10px',
+                              cursor: busy ? 'not-allowed' : 'pointer',
+                              fontSize: '0.85rem',
+                            }}
+                            onMouseEnter={(e) => { if (!busy) (e.currentTarget as HTMLButtonElement).style.background = '#fff3e0' }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'white' }}
+                          >
+                            {busy === 'stopping' ? '…' : 'Stop'}
+                          </button>
+                        )}
+                        {r.status !== 'running' && (
+                          <button
+                            disabled={!!busy}
+                            onClick={(e) => handleDelete(e, r)}
+                            style={{
+                              border: '1px solid #c0392b',
+                              color: busy === 'deleting' ? '#aaa' : '#c0392b',
+                              background: 'white',
+                              borderRadius: 4,
+                              padding: '2px 10px',
+                              cursor: busy ? 'not-allowed' : 'pointer',
+                              fontSize: '0.85rem',
+                            }}
+                            onMouseEnter={(e) => { if (!busy) (e.currentTarget as HTMLButtonElement).style.background = '#fdf0ef' }}
+                            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'white' }}
+                          >
+                            {busy === 'deleting' ? '…' : 'Delete'}
+                          </button>
+                        )}
+                        {actionError[r.id] && (
+                          <span style={{ marginLeft: 8, color: '#c0392b', fontSize: '0.8rem' }}>
+                            {actionError[r.id]}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

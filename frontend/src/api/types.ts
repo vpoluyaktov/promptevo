@@ -9,7 +9,7 @@ export interface Run {
   generations: number
   gamesPerGen: number
   wordSampleSize: number
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped'
 }
 
 export interface RunDetail extends Run {
