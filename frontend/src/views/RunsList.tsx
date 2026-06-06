@@ -114,7 +114,7 @@ export default function RunsList() {
                       <td>{r.seed}</td>
                       <td>{r.generations}</td>
                       <td>{statusBadge(r.status)}</td>
-                      <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                      <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
                         {r.status === 'running' && (
                           <button
                             disabled={!!busy}
@@ -134,25 +134,23 @@ export default function RunsList() {
                             {busy === 'stopping' ? '…' : 'Stop'}
                           </button>
                         )}
-                        {r.status !== 'running' && (
-                          <button
-                            disabled={!!busy}
-                            onClick={(e) => handleDelete(e, r)}
-                            style={{
-                              border: '1px solid #c0392b',
-                              color: busy === 'deleting' ? '#aaa' : '#c0392b',
-                              background: 'white',
-                              borderRadius: 4,
-                              padding: '2px 10px',
-                              cursor: busy ? 'not-allowed' : 'pointer',
-                              fontSize: '0.85rem',
-                            }}
-                            onMouseEnter={(e) => { if (!busy) (e.currentTarget as HTMLButtonElement).style.background = '#fdf0ef' }}
-                            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'white' }}
-                          >
-                            {busy === 'deleting' ? '…' : 'Delete'}
-                          </button>
-                        )}
+                        <button
+                          disabled={!!busy}
+                          onClick={(e) => handleDelete(e, r)}
+                          style={{
+                            border: '1px solid #c0392b',
+                            color: busy === 'deleting' ? '#aaa' : '#c0392b',
+                            background: 'white',
+                            borderRadius: 4,
+                            padding: '2px 10px',
+                            cursor: busy ? 'not-allowed' : 'pointer',
+                            fontSize: '0.85rem',
+                          }}
+                          onMouseEnter={(e) => { if (!busy) (e.currentTarget as HTMLButtonElement).style.background = '#fdf0ef' }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'white' }}
+                        >
+                          {busy === 'deleting' ? '…' : 'Delete'}
+                        </button>
                         {actionError[r.id] && (
                           <span style={{ marginLeft: 8, color: '#c0392b', fontSize: '0.8rem' }}>
                             {actionError[r.id]}
