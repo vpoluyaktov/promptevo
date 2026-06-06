@@ -58,15 +58,15 @@ the UI to compare self-improvement dynamics across LLM models served through
                                           │  HTTP (JSON) + SSE
                                           ▼
                 ┌───────────────────────────────────────────────────┐
-                │                 nginx (service: web)              │
+                │              nginx (service: frontend)            │
                 │   - serves static React bundle (/, /assets/*)     │
-                │   - proxies /api/*  ->  api:8080                   │
+                │   - proxies /api/*  ->  backend:8080               │
                 │   - proxies SSE (proxy_buffering off)             │
                 └───────────────┬───────────────────────────────────┘
-                                │  http://api:8080
+                                │  http://backend:8080
                                 ▼
         ┌───────────────────────────────────────────────────────────────┐
-        │                     Go service (service: api)                 │
+        │                  Go service (service: backend)                │
         │                                                               │
         │  cmd/server ── chi router ── handlers (REST + SSE)            │
         │        │                                                      │
@@ -254,7 +254,7 @@ Run orchestrator. One run = a goroutine that:
 ## 4. REST API
 
 Base path: **`/api`** (the Go service mounts the router at `/api`; nginx proxies
-`/api/*` → `api:8080`). All request/response bodies are JSON
+`/api/*` → `backend:8080`). All request/response bodies are JSON
 (`Content-Type: application/json`) unless noted. Errors use the shape:
 
 ```json
@@ -916,46 +916,61 @@ GCP rules in the global config do not apply here.
 ### Services
 
 ```yaml
-# docker-compose.yml (DevOps owns the final file)
+# docker-compose.yml (committed; DevOps owns the final file)
 services:
-  api:
-    build: { context: ., dockerfile: Dockerfile }   # multi-stage Go build
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend          # multi-stage Go build
     environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - PORT=8080
       - DB_PATH=/data/promptevo.db
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
     volumes:
-      - promptevo-data:/data
-    expose: ["8080"]              # internal only; not published to host
-    restart: unless-stopped
+      - sqlite_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped              # internal only; not published to host
 
-  web:
-    build: { context: ./frontend, dockerfile: Dockerfile }  # node build → nginx
-    ports: ["8080:80"]            # host:container — UI entrypoint
-    depends_on: [api]
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile               # node build → nginx
+    ports:
+      - "3000:80"                          # host:container — UI entrypoint
+    depends_on:
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  promptevo-data:
+  sqlite_data:
 ```
 
-- **`api`** — Go binary. Multi-stage Dockerfile: `golang:1.23-alpine` build
-  stage → minimal `alpine` (or `gcr.io/distroless/static` — CGO-free build
+- **`backend`** — Go binary. Multi-stage `Dockerfile.backend`: `golang:1.23-alpine`
+  build stage → minimal `alpine` (or `gcr.io/distroless/static` — CGO-free build
   permits it). Copies the binary, `migrations/`, and `data/` word lists. Runs as
-  non-root. Listens on `:8080` inside the Compose network only.
-- **`web`** — React build stage (`node:20-alpine`, `npm ci && npm run build`) →
-  `nginx:alpine` serving `/usr/share/nginx/html`. nginx config:
+  non-root. Listens on `:8080` inside the Compose network only (no published port).
+  Healthcheck hits the top-level **`/healthz`** route (registered in
+  `cmd/server/main.go`); the `frontend` service gates on `service_healthy`.
+- **`frontend`** — React build stage (`node:20-alpine`, `npm ci && npm run build`)
+  → `nginx:alpine` serving `/usr/share/nginx/html`. Published on host port
+  **3000**. nginx config:
   - `location / { try_files $uri /index.html; }` (SPA fallback).
-  - `location /api/ { proxy_pass http://api:8080; }`
-  - `location /healthz { proxy_pass http://api:8080; }`
+  - `location /api/ { proxy_pass http://backend:8080; }`
+  - `location /healthz { proxy_pass http://backend:8080; }`
   - SSE: inside the `/api/` block, `proxy_buffering off; proxy_read_timeout
     3600s; proxy_set_header Connection '';` so `EventSource` streams uninterrupted.
-- **volume** `promptevo-data` — persists the SQLite DB across restarts.
+- **volume** `sqlite_data` — persists the SQLite DB across restarts.
 
 ### Build / run
 ```
 export OPENROUTER_API_KEY=sk-or-...
-docker compose up --build      # UI at http://localhost:8080
+docker compose up --build      # UI at http://localhost:3000
 ```
 
 No CI/CD cloud pipeline is required by the spec. If DevOps adds CI, it should run
