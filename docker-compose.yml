@@ -4,7 +4,23 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      # ── LLM Provider ──────────────────────────────────────────────────────
+      # Switch provider by changing LLM_PROVIDER and setting the matching key,
+      # then run: docker compose up --build -d
+      #
+      # Options: openrouter | anthropic | openai
+      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
+
+      # OpenRouter (default) — https://openrouter.ai/keys
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+
+      # Anthropic direct — https://console.anthropic.com/keys
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+
+      # OpenAI direct — https://platform.openai.com/api-keys
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+
+      # ── App config ────────────────────────────────────────────────────────
       - PORT=8080
       - DB_PATH=/data/promptevo.db
     volumes:
