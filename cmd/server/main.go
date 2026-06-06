@@ -5,6 +5,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,6 +45,8 @@ type config struct {
 	LLMTimeoutSeconds int
 	MaxConcurrentRuns int
 	LogLevel          string
+	AuthUsername      string
+	AuthPassword      string
 }
 
 func loadConfig() config {
@@ -56,6 +63,8 @@ func loadConfig() config {
 		LLMTimeoutSeconds: envInt("LLM_TIMEOUT_SECONDS", 60),
 		MaxConcurrentRuns: envInt("MAX_CONCURRENT_RUNS", 2),
 		LogLevel:          envStr("LOG_LEVEL", "info"),
+		AuthUsername:      os.Getenv("AUTH_USERNAME"),
+		AuthPassword:      os.Getenv("AUTH_PASSWORD"),
 	}
 }
 
@@ -132,15 +141,16 @@ func (s *server) isValidModel(m string) bool {
 // ─── Server ───────────────────────────────────────────────────────────────────
 
 type server struct {
-	cfg   config
-	store store.Store
-	hub   *experiment.Hub
-	orch  *experiment.Orchestrator
-	lists *wordle.WordLists
+	cfg       config
+	store     store.Store
+	hub       *experiment.Hub
+	orch      *experiment.Orchestrator
+	lists     *wordle.WordLists
+	authToken string // empty when auth is disabled
 }
 
-func newServer(cfg config, st store.Store, lists *wordle.WordLists, hub *experiment.Hub, orch *experiment.Orchestrator) *server {
-	return &server{cfg: cfg, store: st, hub: hub, orch: orch, lists: lists}
+func newServer(cfg config, st store.Store, lists *wordle.WordLists, hub *experiment.Hub, orch *experiment.Orchestrator, authToken string) *server {
+	return &server{cfg: cfg, store: st, hub: hub, orch: orch, lists: lists, authToken: authToken}
 }
 
 // activeRunCount counts runs with status "running" or "pending" in the store.
@@ -178,15 +188,22 @@ func (s *server) buildRoutes() http.Handler {
 	r.Get("/healthz", s.handleHealthz)
 
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/models", s.handleListModels)
-		r.Get("/runs", s.handleListRuns)
-		r.Post("/runs", s.handleCreateRun)
-		r.Get("/runs/{id}", s.handleGetRun)
-		r.Delete("/runs/{id}", s.handleDeleteRun)
-		r.Get("/runs/{id}/generations", s.handleListGenerations)
-		r.Get("/runs/{id}/games", s.handleListGames)
-		r.Get("/runs/{id}/stream", s.handleStream)
-		r.Get("/games/{id}/guesses", s.handleListGuesses)
+		// Public: login endpoint (no auth required)
+		r.Post("/auth/login", s.handleLogin)
+
+		// Protected: all other API routes require a valid Bearer token
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAuth)
+			r.Get("/models", s.handleListModels)
+			r.Get("/runs", s.handleListRuns)
+			r.Post("/runs", s.handleCreateRun)
+			r.Get("/runs/{id}", s.handleGetRun)
+			r.Delete("/runs/{id}", s.handleDeleteRun)
+			r.Get("/runs/{id}/generations", s.handleListGenerations)
+			r.Get("/runs/{id}/games", s.handleListGames)
+			r.Get("/runs/{id}/stream", s.handleStream)
+			r.Get("/games/{id}/guesses", s.handleListGuesses)
+		})
 	})
 
 	return r
@@ -196,6 +213,57 @@ func (s *server) buildRoutes() http.Handler {
 
 func (s *server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleLogin handles POST /api/auth/login.
+// When auth is disabled it returns a dummy token so the frontend works uniformly.
+func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if s.authToken == "" {
+		// Auth disabled — return a dummy token so the frontend works uniformly.
+		writeJSON(w, http.StatusOK, map[string]string{"token": "disabled"})
+		return
+	}
+
+	userMatch := subtle.ConstantTimeCompare([]byte(body.Username), []byte(s.cfg.AuthUsername))
+	passMatch := subtle.ConstantTimeCompare([]byte(body.Password), []byte(s.cfg.AuthPassword))
+	if userMatch+passMatch != 2 {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": s.authToken})
+}
+
+// requireAuth is middleware that enforces Bearer token authentication on
+// protected routes. When auth is disabled (authToken == "") all requests pass.
+func (s *server) requireAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.authToken == "" {
+			// Auth disabled — pass through.
+			next.ServeHTTP(w, r)
+			return
+		}
+		header := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if !strings.HasPrefix(header, prefix) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		token := strings.TrimPrefix(header, prefix)
+		if subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *server) handleListModels(w http.ResponseWriter, _ *http.Request) {
@@ -628,7 +696,21 @@ func main() {
 		Hub:             hub,
 	}
 
-	srv := newServer(cfg, st, lists, hub, orch)
+	// Generate a per-startup server secret and derive the auth token from it.
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		log.Fatal("failed to generate auth secret:", err)
+	}
+	var authToken string
+	if cfg.AuthUsername != "" && cfg.AuthPassword != "" {
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%x", cfg.AuthUsername, cfg.AuthPassword, secret)))
+		authToken = hex.EncodeToString(sum[:])
+		log.Println("auth: enabled for user", cfg.AuthUsername)
+	} else {
+		log.Println("auth: disabled (AUTH_USERNAME/AUTH_PASSWORD not set)")
+	}
+
+	srv := newServer(cfg, st, lists, hub, orch, authToken)
 	httpSrv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      srv.buildRoutes(),

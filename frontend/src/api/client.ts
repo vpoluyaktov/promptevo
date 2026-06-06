@@ -7,14 +7,27 @@ import type {
   ListGuessesResponse,
   CreateRunRequest,
 } from './types'
+import { getToken, clearToken } from '../auth'
 
 const BASE = '/api'
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = getToken()
+  const authHeaders: Record<string, string> = token
+    ? { Authorization: `Bearer ${token}` }
+    : {}
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
     ...options,
   })
+
+  if (res.status === 401) {
+    clearToken()
+    window.location.href = '/login'
+    throw new Error('Unauthorized')
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error((body as { error: string }).error ?? res.statusText)

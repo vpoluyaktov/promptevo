@@ -20,6 +20,11 @@ services:
       # OpenAI direct — https://platform.openai.com/api-keys
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
 
+      # ── Auth ──────────────────────────────────────────────────────────────
+      # Set both to enable login protection. Leave blank to disable (local dev).
+      - AUTH_USERNAME=${AUTH_USERNAME:-}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-}
+
       # ── App config ────────────────────────────────────────────────────────
       - PORT=8080
       - DB_PATH=/data/promptevo.db
