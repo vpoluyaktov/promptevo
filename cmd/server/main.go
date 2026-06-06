@@ -89,14 +89,15 @@ func envInt(key string, def int) int {
 // ─── Selectable models ────────────────────────────────────────────────────────
 
 var openRouterModels = []string{
-	"anthropic/claude-3.5-sonnet",
-	"anthropic/claude-3-haiku",
+	"anthropic/claude-3-5-sonnet-20241022",
+	"anthropic/claude-3-5-haiku-20241022",
+	"anthropic/claude-3-opus-20240229",
 	"openai/gpt-4o",
 	"openai/gpt-4o-mini",
-	"google/gemini-2.0-flash",
+	"google/gemini-2.0-flash-001",
 	"google/gemini-1.5-pro",
 	"meta-llama/llama-3.3-70b-instruct",
-	"mistralai/mistral-large",
+	"mistralai/mistral-large-2411",
 }
 
 var anthropicModels = []string{

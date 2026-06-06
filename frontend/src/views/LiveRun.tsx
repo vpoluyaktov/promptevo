@@ -18,6 +18,7 @@ interface GenSummary {
   solveRate: number
   meanGuesses: number
   prompt: string
+  tokensUsed?: number
 }
 
 export default function LiveRun() {
@@ -77,6 +78,7 @@ export default function LiveRun() {
         solveRate: e.solveRate,
         meanGuesses: e.meanGuesses,
         prompt: e.prompt,
+        tokensUsed: e.tokensUsed,
       }])
       setPrevPrompt(currentPrompt)
       setCurrentPrompt(e.prompt)
@@ -172,6 +174,19 @@ export default function LiveRun() {
             <button className="btn btn-secondary btn-sm" onClick={() => setShowDiff(false)}>Hide</button>
           </div>
           <PromptDiff oldPrompt={prevPrompt} newPrompt={currentPrompt} />
+        </div>
+      )}
+
+      {/* Fallback warnings for completed generations */}
+      {genSummaries.some((g) => g.tokensUsed === 0) && (
+        <div className="warning-banner" style={{ marginBottom: 24 }}>
+          {genSummaries
+            .filter((g) => g.tokensUsed === 0)
+            .map((g) => (
+              <div key={g.index}>
+                ⚠️ Generation {g.index} used no LLM calls — fallback word-picker was active.
+              </div>
+            ))}
         </div>
       )}
 

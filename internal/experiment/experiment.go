@@ -69,6 +69,7 @@ type Event struct {
 	MeanInfoGain  *float64 `json:"meanInfoGain,omitempty"`
 	ViolationRate *float64 `json:"violationRate,omitempty"`
 	Prompt        string   `json:"prompt,omitempty"`
+	TokensUsed    int      `json:"tokensUsed,omitempty"`
 	Status        string   `json:"status,omitempty"`
 	Convergence   string   `json:"convergence,omitempty"`
 	Message       string   `json:"message,omitempty"`
@@ -366,6 +367,7 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 			MeanInfoGain:  &meanInfoGain,
 			ViolationRate: &violationRate,
 			Prompt:        nextPrompt,
+			TokensUsed:    totalTokens,
 		})
 
 		currentPrompt = nextPrompt

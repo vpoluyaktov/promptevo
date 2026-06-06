@@ -80,6 +80,7 @@ export interface SSEGenEnd {
   meanInfoGain: number
   violationRate: number
   prompt: string
+  tokensUsed?: number
 }
 
 export interface SSERunEnd {

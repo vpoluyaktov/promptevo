@@ -141,9 +141,21 @@ export default function RunDetail() {
 
   const gens = run.generationsData ?? []
   const lastGen = gens[gens.length - 1]
+  const llmNeverUsed =
+    run.status === 'completed' &&
+    gens.length > 0 &&
+    gens.every((g) => (g.tokensUsed ?? 0) === 0)
 
   return (
     <div className="page">
+      {/* LLM fallback warning */}
+      {llmNeverUsed && (
+        <div className="warning-banner">
+          ⚠️ LLM was not used in this run — all guesses used the fallback word-picker.
+          Check your model selection and API key. Results are not meaningful for research.
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-24">
         <div>

@@ -52,10 +52,14 @@ function GameModal({ game, onClose }: GameModalProps) {
                       {g.feedback} (+{g.infoGainBits.toFixed(2)} bits)
                     </span>
                   </div>
-                  {g.reasoningText && (
+                  {g.reasoningText ? (
                     <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: 4, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
                       {g.reasoningText.slice(0, 300)}{g.reasoningText.length > 300 ? '…' : ''}
                     </div>
+                  ) : (
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: 4, display: 'inline-block', background: '#f0f0f0', borderRadius: 3, padding: '1px 6px' }}>
+                      fallback
+                    </span>
                   )}
                 </div>
               ))}
