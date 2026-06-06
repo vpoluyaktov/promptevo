@@ -251,13 +251,15 @@ func (s *server) requireAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		header := r.Header.Get("Authorization")
+		// EventSource (SSE) cannot send custom headers, so fall back to
+		// ?token= query param for the stream endpoint.
+		var token string
 		const prefix = "Bearer "
-		if !strings.HasPrefix(header, prefix) {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, prefix) {
+			token = strings.TrimPrefix(h, prefix)
+		} else {
+			token = r.URL.Query().Get("token")
 		}
-		token := strings.TrimPrefix(header, prefix)
 		if subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) != 1 {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return

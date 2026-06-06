@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import type { SSEEvent } from '../api/types'
+import { getToken } from '../auth'
 
 type Handler = (event: SSEEvent) => void
 
@@ -14,7 +15,11 @@ export function useRunStream(runId: number | null, onEvent: Handler) {
   const connect = useCallback(() => {
     if (closedRef.current || runId === null) return
 
-    const es = new EventSource(`/api/runs/${runId}/stream`)
+    const token = getToken()
+    const url = token
+      ? `/api/runs/${runId}/stream?token=${encodeURIComponent(token)}`
+      : `/api/runs/${runId}/stream`
+    const es = new EventSource(url)
     esRef.current = es
 
     es.onmessage = (e: MessageEvent) => {
