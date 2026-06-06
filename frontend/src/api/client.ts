@@ -6,6 +6,7 @@ import type {
   ListGamesResponse,
   ListGuessesResponse,
   CreateRunRequest,
+  AnalyticsResponse,
 } from './types'
 import { getToken, clearToken } from '../auth'
 
@@ -70,5 +71,9 @@ export const api = {
 
   listGuesses(gameId: number): Promise<ListGuessesResponse> {
     return request(`/games/${gameId}/guesses`)
+  },
+
+  getAnalytics(id: number): Promise<AnalyticsResponse> {
+    return request(`/runs/${id}/analytics`)
   },
 }

@@ -9,6 +9,7 @@ export interface Run {
   generations: number
   gamesPerGen: number
   wordSampleSize: number
+  maxGuesses: number
   status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped'
 }
 
@@ -28,6 +29,8 @@ export interface Generation {
   meanInfoGain?: number
   violationRate?: number
   tokensUsed?: number
+  playerTokens?: number
+  reflectorTokens?: number
 }
 
 // Game
@@ -61,6 +64,7 @@ export interface SSEGuess {
   guess: string
   feedback: string
   infoGain: number
+  reasoning?: string
 }
 
 export interface SSEGameEnd {
@@ -122,5 +126,69 @@ export interface CreateRunRequest {
   generations: number
   gamesPerGen: number
   wordSampleSize: number
+  maxGuesses: number
   includeBaselines: boolean
+}
+
+export interface SolveRateCIPoint {
+  genIndex: number
+  n: number
+  wins: number
+  solveRate: number
+  ciLower: number
+  ciUpper: number
+}
+export interface WinDistPoint {
+  genIndex: number
+  total: number
+  wonByTurn: Record<string, number>
+  lost: number
+}
+export interface TurnInfoGainPoint {
+  genIndex: number
+  turnIndex: number
+  meanInfoGain: number
+  n: number
+}
+export interface OpeningWordRow { word: string; count: number }
+export interface OpeningWordsPoint { genIndex: number; words: OpeningWordRow[] }
+export interface RemainingCandPoint {
+  gameId: number
+  genIndex: number
+  answer: string
+  remainingCandidates: number
+  numGuesses: number
+}
+export interface TokenEfficiencyPoint {
+  genIndex: number
+  playerTokens: number
+  reflectorTokens: number
+  tokensUsed: number
+  split: boolean
+}
+export interface ReasoningPoint {
+  gameId: number
+  genIndex: number
+  won: boolean
+  reasoningChars: number
+  numGuesses: number
+}
+export interface WordDifficultyPoint {
+  answer: string
+  games: number
+  wins: number
+  winRate: number
+}
+export interface AnalyticsResponse {
+  runId: number
+  maxGuesses: number
+  meta: { totalLlmGames: number; generations: number }
+  solveRateCI: SolveRateCIPoint[]
+  winDistribution: WinDistPoint[]
+  turnInfoGain: TurnInfoGainPoint[]
+  openingWords: OpeningWordsPoint[]
+  remainingCandidates: RemainingCandPoint[]
+  tokenEfficiency: TokenEfficiencyPoint[]
+  reasoningVerbosity: ReasoningPoint[]
+  wordDifficulty: WordDifficultyPoint[]
 }

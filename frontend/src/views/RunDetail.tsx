@@ -6,8 +6,9 @@ import MetricsChart from '../components/MetricsChart'
 import PromptDiff from '../components/PromptDiff'
 import GameList from '../components/GameList'
 import ConvergenceBadge from '../components/ConvergenceBadge'
+import AnalysisTab from '../components/analytics/AnalysisTab'
 
-type Tab = 'charts' | 'prompts' | 'games'
+type Tab = 'charts' | 'prompts' | 'games' | 'analysis'
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
@@ -49,7 +50,7 @@ function PromptTimeline({ generations }: PromptTabProps) {
         >Next →</button>
         <span className="text-secondary text-sm" style={{ marginLeft: 'auto' }}>
           {cur.promptLen} chars
-          {cur.solveRate !== undefined && ` · ${(cur.solveRate * 100).toFixed(0)}% solve rate`}
+          {cur.solveRate != null && ` · ${(cur.solveRate * 100).toFixed(0)}% solve rate`}
         </span>
       </div>
 
@@ -195,19 +196,19 @@ export default function RunDetail() {
           <div style={{ display: 'flex', gap: 40, flexWrap: 'wrap' }}>
             <div>
               <div className="big-stat" style={{ color: 'var(--accent)' }}>
-                {lastGen.solveRate !== undefined ? `${(lastGen.solveRate * 100).toFixed(0)}%` : '—'}
+                {lastGen.solveRate != null ? `${(lastGen.solveRate * 100).toFixed(0)}%` : '—'}
               </div>
               <div className="big-stat-label">Final Solve Rate</div>
             </div>
             <div>
               <div className="big-stat">
-                {lastGen.meanGuesses !== undefined ? lastGen.meanGuesses.toFixed(1) : '—'}
+                {lastGen.meanGuesses != null ? lastGen.meanGuesses.toFixed(1) : '—'}
               </div>
               <div className="big-stat-label">Mean Guesses</div>
             </div>
             <div>
               <div className="big-stat">
-                {lastGen.meanInfoGain !== undefined ? lastGen.meanInfoGain.toFixed(2) : '—'}
+                {lastGen.meanInfoGain != null ? lastGen.meanInfoGain.toFixed(2) : '—'}
               </div>
               <div className="big-stat-label">Mean Info Gain</div>
             </div>
@@ -225,13 +226,13 @@ export default function RunDetail() {
 
       {/* Tabs */}
       <div className="tabs">
-        {(['charts', 'prompts', 'games'] as Tab[]).map((t) => (
+        {(['charts', 'prompts', 'games', 'analysis'] as Tab[]).map((t) => (
           <button
             key={t}
             className={`tab-btn${tab === t ? ' active' : ''}`}
             onClick={() => setTab(t)}
           >
-            {t === 'charts' ? 'Charts' : t === 'prompts' ? 'Prompt Timeline' : 'Games'}
+            {t === 'charts' ? 'Charts' : t === 'prompts' ? 'Prompt Timeline' : t === 'games' ? 'Games' : 'Analysis'}
           </button>
         ))}
       </div>
@@ -245,6 +246,12 @@ export default function RunDetail() {
       {tab === 'prompts' && <PromptTimeline generations={gens} />}
 
       {tab === 'games' && <GameList games={games} />}
+
+      {tab === 'analysis' && (
+        gens.length === 0
+          ? <div className="empty-state"><p>No generations completed yet.</p></div>
+          : <AnalysisTab runId={runId} generations={gens} maxGuesses={run.maxGuesses} />
+      )}
     </div>
   )
 }
