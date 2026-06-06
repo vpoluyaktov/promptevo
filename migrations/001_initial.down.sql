@@ -1,0 +1,7 @@
+DROP INDEX IF EXISTS idx_guesses_game;
+DROP INDEX IF EXISTS idx_games_run;
+DROP INDEX IF EXISTS idx_generations_run;
+DROP TABLE IF EXISTS guesses;
+DROP TABLE IF EXISTS games;
+DROP TABLE IF EXISTS generations;
+DROP TABLE IF EXISTS runs;
