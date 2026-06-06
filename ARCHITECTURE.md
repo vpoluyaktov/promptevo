@@ -77,7 +77,7 @@ the UI to compare self-improvement dynamics across LLM models served through
         │   agent   reflector    wordle        baselines               │
         │     │         │           (scoring,                          │
         │     ▼         ▼            info gain)                         │
-        │   llm.Client (OpenRouter HTTP)                               │
+        │   llm.Client (OpenRouter / Anthropic / OpenAI HTTP)          │
         │        │                                                      │
         │        ▼                                                      │
         │   internal/store  ── modernc.org/sqlite ──► /data/promptevo.db│
@@ -89,7 +89,7 @@ the UI to compare self-improvement dynamics across LLM models served through
                                 │  promptevo-data   │
                                 └───────────────────┘
 
-  OpenRouter (external)  ◄──── llm.Client (HTTPS, Bearer OPENROUTER_API_KEY)
+  OpenRouter / Anthropic / OpenAI  ◄──── llm.Client (HTTPS) — provider set by LLM_PROVIDER
 ```
 
 ---
@@ -261,26 +261,48 @@ Base path: **`/api`** (the Go service mounts the router at `/api`; nginx proxies
 { "error": "human readable message" }
 ```
 
-| Method | Path                        | Description |
-|--------|-----------------------------|-------------|
-| GET    | `/healthz`                  | Liveness probe (not under `/api`). |
-| GET    | `/api/models`               | List selectable OpenRouter models. |
-| GET    | `/api/runs`                 | List all runs (newest first). |
-| POST   | `/api/runs`                 | Create + start a run. |
-| GET    | `/api/runs/{id}`            | Run detail incl. generations. |
-| GET    | `/api/runs/{id}/generations`| Generations for a run. |
-| GET    | `/api/runs/{id}/games`      | Games for a run (optional `?gen=` filter). |
-| GET    | `/api/games/{id}/guesses`   | Guesses (turns) for one game. |
-| GET    | `/api/runs/{id}/stream`     | **SSE** live event stream (see §7). |
-| DELETE | `/api/runs/{id}`            | Delete a run and all child rows. |
+| Method | Path                        | Auth required | Description |
+|--------|-----------------------------|---------------|-------------|
+| GET    | `/healthz`                  | No  | Liveness probe (not under `/api`). |
+| POST   | `/api/auth/login`           | No  | Exchange credentials for Bearer token. |
+| GET    | `/api/models`               | Yes | List selectable models for the active provider. |
+| GET    | `/api/runs`                 | Yes | List all runs (newest first). |
+| POST   | `/api/runs`                 | Yes | Create + start a run. |
+| GET    | `/api/runs/{id}`            | Yes | Run detail incl. generations. |
+| GET    | `/api/runs/{id}/generations`| Yes | Generations for a run. |
+| GET    | `/api/runs/{id}/games`      | Yes | Games for a run (optional `?gen=` filter). |
+| GET    | `/api/games/{id}/guesses`   | Yes | Guesses (turns) for one game. |
+| GET    | `/api/runs/{id}/stream`     | Yes | **SSE** live event stream (see §7). |
+| DELETE | `/api/runs/{id}`            | Yes | Delete a run and all child rows. |
 
 ### 4.0 `GET /healthz`
 **200** `{"status":"ok"}`. No body in request.
 
-### 4.1 `GET /api/models`
-Returns the hardcoded selectable model list (player & reflector pickers).
+### 4.1 `POST /api/auth/login`
+Public (no token required). Returns a Bearer token valid until the server restarts.
 
-**Response 200**
+**Request**
+```json
+{ "username": "admin", "password": "secret" }
+```
+**Response 200** (auth enabled)
+```json
+{ "token": "a3f8c2..." }
+```
+**Response 200** (auth disabled — `AUTH_USERNAME`/`AUTH_PASSWORD` not set)
+```json
+{ "token": "disabled" }
+```
+**Response 401** — wrong credentials.
+
+All subsequent requests must include `Authorization: Bearer <token>`.
+
+---
+
+### 4.2 `GET /api/models`
+Returns the model list for the **active provider** (`LLM_PROVIDER` env var).
+
+**Response 200 — openrouter (default)**
 ```json
 {
   "models": [
@@ -294,6 +316,14 @@ Returns the hardcoded selectable model list (player & reflector pickers).
     "mistralai/mistral-large"
   ]
 }
+```
+**Response 200 — anthropic**
+```json
+{ "models": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001", "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"] }
+```
+**Response 200 — openai**
+```json
+{ "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o1-mini", "o3-mini"] }
 ```
 
 ### 4.2 `GET /api/runs`
@@ -887,21 +917,28 @@ Parsing per §9.5. On parse failure the previous prompt is reused (no crash).
 
 Loaded by `cmd/server/main.go` (env → struct, with defaults). The Go service:
 
-| Variable             | Type   | Default                  | Description |
-|----------------------|--------|--------------------------|-------------|
-| `PORT`               | int    | `8080`                   | HTTP listen port. |
-| `DB_PATH`            | string | `/data/promptevo.db`     | SQLite file path (on the volume). |
-| `ANSWERS_PATH`       | string | `data/answers.txt`       | Answer word list. |
-| `GUESSES_PATH`       | string | `data/guesses.txt`       | Valid-guess word list. |
-| `OPENROUTER_API_KEY` | string | — (required for runs)    | Bearer token for OpenRouter. |
-| `OPENROUTER_BASE_URL`| string | `https://openrouter.ai/api/v1` | Override for testing/mocks. |
-| `LLM_TIMEOUT_SECONDS`| int    | `60`                     | Per-request LLM timeout. |
-| `MAX_CONCURRENT_RUNS`| int    | `2`                      | Orchestrator concurrency cap. |
-| `LOG_LEVEL`          | string | `info`                   | `debug|info|warn|error`. |
+| Variable              | Type   | Default                        | Description |
+|-----------------------|--------|--------------------------------|-------------|
+| `PORT`                | int    | `8080`                         | HTTP listen port. |
+| `DB_PATH`             | string | `/data/promptevo.db`           | SQLite file path (on the volume). |
+| `ANSWERS_PATH`        | string | `data/answers.txt`             | Answer word list. |
+| `GUESSES_PATH`        | string | `data/guesses.txt`             | Valid-guess word list. |
+| `LLM_PROVIDER`        | string | `openrouter`                   | Active LLM provider: `openrouter` \| `anthropic` \| `openai`. |
+| `OPENROUTER_API_KEY`  | string | —                              | Required when `LLM_PROVIDER=openrouter`. |
+| `ANTHROPIC_API_KEY`   | string | —                              | Required when `LLM_PROVIDER=anthropic`. |
+| `OPENAI_API_KEY`      | string | —                              | Required when `LLM_PROVIDER=openai`. |
+| `OPENROUTER_BASE_URL` | string | `https://openrouter.ai/api/v1` | Override for testing/mocks (OpenRouter only). |
+| `LLM_TIMEOUT_SECONDS` | int    | `60`                           | Per-request LLM timeout. |
+| `MAX_CONCURRENT_RUNS` | int    | `2`                            | Orchestrator concurrency cap. |
+| `LOG_LEVEL`           | string | `info`                         | `debug\|info\|warn\|error`. |
+| `AUTH_USERNAME`       | string | —                              | Login username. Auth disabled when blank. |
+| `AUTH_PASSWORD`       | string | —                              | Login password. Auth disabled when blank. |
 
-Precedence: explicit env var > built-in default. No config file. Missing
-`OPENROUTER_API_KEY` is allowed at boot (health/list endpoints work) but
-`POST /api/runs` returns `503` until it is set.
+Precedence: explicit env var > built-in default. No config file.
+
+Missing API key is allowed at boot (health/list/login endpoints work) but `POST /api/runs` returns `503` until the active provider's key is set.
+
+**Switching providers**: change `LLM_PROVIDER` and set the matching `*_API_KEY` in `.env`, then `docker compose up -d` (no rebuild needed — env-only change).
 
 Frontend build-time: nginx proxies `/api` so the SPA uses **relative** URLs
 (no `VITE_API_URL` needed in the Compose deployment).
@@ -923,7 +960,12 @@ services:
       context: .
       dockerfile: Dockerfile.backend          # multi-stage Go build
     environment:
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - AUTH_USERNAME=${AUTH_USERNAME:-}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:-}
       - PORT=8080
       - DB_PATH=/data/promptevo.db
     volumes:
@@ -941,7 +983,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile               # node build → nginx
     ports:
-      - "3000:80"                          # host:container — UI entrypoint
+      - "3001:80"                          # host:container — UI entrypoint
     depends_on:
       backend:
         condition: service_healthy

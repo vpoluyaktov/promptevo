@@ -66,7 +66,7 @@ model lift a weaker *player* model?
         │   chi router → REST + SSE handlers          │
         │   experiment orchestrator (per-run goroutine)│
         │   agent · reflector · wordle · baselines    │
-        │   llm.Client ──HTTPS──► OpenRouter (extern) │
+        │   llm.Client ──HTTPS──► OpenRouter/Anthropic/OpenAI │
         │   store ──► modernc.org/sqlite (CGO-free)   │
         └───────────────────┬─────────────────────────┘
                             ▼
@@ -86,7 +86,7 @@ model lift a weaker *player* model?
 - **`frontend`** — the React/TypeScript bundle built with Vite and served by
   nginx. nginx also reverse-proxies `/api/*` to the backend, with buffering
   disabled so Server-Sent Events stream to the browser uninterrupted. This is the
-  only service published to the host (port **3000**).
+  only service published to the host (port **3001**).
 - **`sqlite_data`** — a named Docker volume holding the SQLite database, so runs
   persist across `docker compose down`/`up`.
 
@@ -98,9 +98,11 @@ model lift a weaker *player* model?
 git clone <repo-url>
 cd promptevo
 cp .env.example .env
-# Edit .env and set OPENROUTER_API_KEY to your key from https://openrouter.ai/keys
+# Edit .env:
+#   - Set LLM_PROVIDER and the matching API key (see "Switching providers" below)
+#   - Set AUTH_USERNAME + AUTH_PASSWORD to protect the app (recommended)
 docker compose up --build
-# Open http://localhost:3000
+# Open http://localhost:3001
 ```
 
 The first build compiles the Go binary and the React bundle, so it takes a minute.
@@ -109,12 +111,53 @@ the frontend waits for the backend's health check to pass before starting (see
 `depends_on: condition: service_healthy`).
 
 > The app boots even **without** an API key — you can browse the UI and past runs.
-> Starting a *new* run requires `OPENROUTER_API_KEY`; without it `POST /api/runs`
+> Starting a *new* run requires the active provider's API key; without it `POST /api/runs`
 > returns `503 LLM gateway not configured`.
 
 ---
 
-## 4. Running an experiment
+## 4. Authentication
+
+When `AUTH_USERNAME` and `AUTH_PASSWORD` are set in `.env`, the app requires a
+login before any API call can be made. A login form is shown automatically; after
+signing in, the token is stored in `localStorage` and included on every request.
+
+- **Enable** (recommended for public deployments): set both vars in `.env`.
+- **Disable** (local dev / trusted network): leave both vars blank or omit them.
+- The token is stateless and derived from your credentials + a random server secret.
+  It is invalidated on every container restart, requiring a fresh login.
+- There is no "forgot password" flow — just update `.env` and restart.
+
+---
+
+## 5. Switching LLM providers
+
+The app supports three providers. Only one is active at a time, selected by
+`LLM_PROVIDER` in `.env`:
+
+| Provider | `LLM_PROVIDER` | Key variable | Model example |
+|---|---|---|---|
+| OpenRouter (default) | `openrouter` | `OPENROUTER_API_KEY` | `openai/gpt-4o` |
+| Anthropic direct | `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` |
+| OpenAI direct | `openai` | `OPENAI_API_KEY` | `gpt-4o` |
+
+To switch, edit `.env` and restart (**no rebuild needed**):
+
+```bash
+# Example: switch to Anthropic
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+
+docker compose up -d
+```
+
+The model dropdown in the UI automatically reflects the active provider's available
+models. For a fair cross-model comparison, run two experiments with the **same seed**
+— one per provider — then use the Model Comparison view to overlay their trajectories.
+
+---
+
+## 6. Running an experiment
 
 1. **Open the UI** at <http://localhost:3000>. The landing page is the **Runs
    list** — every run you have started, newest first, with its models, config, and
@@ -146,7 +189,7 @@ the frontend waits for the backend's health check to pass before starting (see
 
 ---
 
-## 5. Interpreting the dashboards
+## 7. Interpreting the dashboards
 
 - **Solve rate** — the fraction of games won (answer found within six guesses) in a
   generation, in `[0, 1]`. This is the primary "is the agent getting better?" axis.
@@ -180,7 +223,7 @@ the frontend waits for the backend's health check to pass before starting (see
 
 ---
 
-## 6. Cross-model comparison guide
+## 8. Cross-model comparison guide
 
 To compare two models fairly, hold *everything except the model* constant:
 
@@ -201,7 +244,7 @@ better self-edits for the same player.
 
 ---
 
-## 7. Word list source
+## 9. Word list source
 
 `data/answers.txt` (the answer pool) and `data/guesses.txt` (the valid-guess pool,
 a superset of the answers) ship as **placeholder** curated lists of real five-letter
@@ -222,7 +265,7 @@ rebuild.
 
 ---
 
-## 8. Reproducibility
+## 10. Reproducibility
 
 - **Seeded word sampling.** Each run draws `wordSampleSize` answers via a
   deterministic Fisher–Yates shuffle of the answer pool seeded by the run's `seed`.
@@ -239,14 +282,15 @@ rebuild.
 
 ---
 
-## 9. Development setup (without Docker)
+## 11. Development setup (without Docker)
 
 Run the two services natively for a fast edit loop.
 
 **Backend** (Go 1.23+):
 
 ```bash
-export OPENROUTER_API_KEY=sk-or-...
+export LLM_PROVIDER=openrouter       # or anthropic / openai
+export OPENROUTER_API_KEY=sk-or-...  # set the key for your chosen provider
 export DB_PATH=./promptevo.db        # local file instead of the /data volume
 go run ./cmd/server                  # listens on :8080
 
@@ -271,7 +315,7 @@ Vite URL. In the Docker deployment nginx fills this role, so the SPA uses relati
 
 ---
 
-## 10. Configuration reference
+## 12. Configuration reference
 
 All backend configuration is via environment variables (env → struct, with
 defaults). In Docker these are set on the `backend` service in `docker-compose.yml`
@@ -279,12 +323,17 @@ and sourced from `.env`.
 
 | Variable               | Default                          | Description |
 |------------------------|----------------------------------|-------------|
-| `OPENROUTER_API_KEY`   | — (required to start runs)       | Bearer token for OpenRouter. App boots without it; `POST /api/runs` returns `503` until set. |
+| `LLM_PROVIDER`         | `openrouter`                     | Active provider: `openrouter` \| `anthropic` \| `openai`. |
+| `OPENROUTER_API_KEY`   | —                                | Required when `LLM_PROVIDER=openrouter`. |
+| `ANTHROPIC_API_KEY`    | —                                | Required when `LLM_PROVIDER=anthropic`. |
+| `OPENAI_API_KEY`       | —                                | Required when `LLM_PROVIDER=openai`. |
+| `AUTH_USERNAME`        | —                                | Login username. Auth disabled when blank. |
+| `AUTH_PASSWORD`        | —                                | Login password. Auth disabled when blank. |
 | `PORT`                 | `8080`                           | HTTP listen port. |
 | `DB_PATH`              | `/data/promptevo.db`             | SQLite file path (on the `sqlite_data` volume). |
 | `ANSWERS_PATH`         | `data/answers.txt`               | Answer word list (relative to the working dir). |
 | `GUESSES_PATH`         | `data/guesses.txt`               | Valid-guess word list. |
-| `OPENROUTER_BASE_URL`  | `https://openrouter.ai/api/v1`   | Override for testing/mocks. |
+| `OPENROUTER_BASE_URL`  | `https://openrouter.ai/api/v1`   | Override for testing/mocks (OpenRouter only). |
 | `LLM_TIMEOUT_SECONDS`  | `60`                             | Per-request LLM timeout. |
 | `MAX_CONCURRENT_RUNS`  | `2`                              | Orchestrator concurrency cap. |
 | `LOG_LEVEL`            | `info`                           | `debug` \| `info` \| `warn` \| `error`. |
