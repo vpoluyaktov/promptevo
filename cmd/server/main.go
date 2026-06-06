@@ -88,56 +88,34 @@ func envInt(key string, def int) int {
 
 // ─── Selectable models ────────────────────────────────────────────────────────
 
-var openRouterModels = []string{
-	"anthropic/claude-3-5-sonnet-20241022",
-	"anthropic/claude-3-5-haiku-20241022",
-	"anthropic/claude-3-opus-20240229",
-	"openai/gpt-4o",
-	"openai/gpt-4o-mini",
-	"google/gemini-2.0-flash-001",
-	"google/gemini-1.5-pro",
-	"meta-llama/llama-3.3-70b-instruct",
-	"mistralai/mistral-large-2411",
-}
-
-var anthropicModels = []string{
-	"claude-opus-4-8",
-	"claude-sonnet-4-6",
-	"claude-haiku-4-5-20251001",
-	"claude-3-5-sonnet-20241022",
-	"claude-3-5-haiku-20241022",
-	"claude-3-opus-20240229",
-}
-
-var openAIModels = []string{
-	"gpt-4o",
-	"gpt-4o-mini",
-	"gpt-4-turbo",
-	"o1",
-	"o1-mini",
-	"o3-mini",
-}
-
-// modelsForProvider returns the model list appropriate for the given provider.
-func modelsForProvider(provider string) []string {
+// fallbackModels returns a hardcoded model list used when the provider API is
+// unreachable (no key set, network error, etc.).
+func fallbackModels(provider string) []string {
 	switch provider {
 	case "anthropic":
-		return anthropicModels
+		return []string{
+			"claude-opus-4-8",
+			"claude-sonnet-4-6",
+			"claude-haiku-4-5-20251001",
+			"claude-3-5-sonnet-20241022",
+			"claude-3-5-haiku-20241022",
+		}
 	case "openai":
-		return openAIModels
-	default:
-		return openRouterModels
-	}
-}
-
-// isValidModel reports whether m is in the model list for the server's provider.
-func (s *server) isValidModel(m string) bool {
-	for _, valid := range modelsForProvider(s.cfg.LLMProvider) {
-		if m == valid {
-			return true
+		return []string{
+			"gpt-4o",
+			"gpt-4o-mini",
+			"o3-mini",
+			"o1",
+		}
+	default: // openrouter
+		return []string{
+			"openai/gpt-4o-mini",
+			"openai/gpt-4o",
+			"google/gemini-2.0-flash-001",
+			"meta-llama/llama-3.3-70b-instruct",
+			"anthropic/claude-3-5-sonnet-20241022",
 		}
 	}
-	return false
 }
 
 // ─── Server ───────────────────────────────────────────────────────────────────
@@ -281,8 +259,30 @@ func (s *server) requireAuth(next http.Handler) http.Handler {
 	})
 }
 
-func (s *server) handleListModels(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string][]string{"models": modelsForProvider(s.cfg.LLMProvider)})
+func (s *server) handleListModels(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	models, err := llm.ListModels(ctx, s.cfg.LLMProvider, s.activeAPIKey(), s.cfg.OpenRouterBaseURL, 10*time.Second)
+	if err != nil || len(models) == 0 {
+		models = fallbackModels(s.cfg.LLMProvider)
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"models": models})
+}
+
+// activeAPIKey returns the API key for the configured LLM provider.
+func (s *server) activeAPIKey() string {
+	return apiKeyForProvider(s.cfg)
+}
+
+func apiKeyForProvider(cfg config) string {
+	switch cfg.LLMProvider {
+	case "anthropic":
+		return cfg.AnthropicAPIKey
+	case "openai":
+		return cfg.OpenAIAPIKey
+	default:
+		return cfg.OpenRouterAPIKey
+	}
 }
 
 func (s *server) handleListRuns(w http.ResponseWriter, r *http.Request) {
@@ -307,16 +307,7 @@ type createRunRequest struct {
 }
 
 func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
-	var apiKeyMissing bool
-	switch s.cfg.LLMProvider {
-	case "anthropic":
-		apiKeyMissing = s.cfg.AnthropicAPIKey == ""
-	case "openai":
-		apiKeyMissing = s.cfg.OpenAIAPIKey == ""
-	default:
-		apiKeyMissing = s.cfg.OpenRouterAPIKey == ""
-	}
-	if apiKeyMissing {
+	if s.activeAPIKey() == "" {
 		writeError(w, http.StatusServiceUnavailable, "LLM gateway not configured")
 		return
 	}
@@ -342,16 +333,8 @@ func (s *server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "playerModel is required")
 		return
 	}
-	if !s.isValidModel(req.PlayerModel) {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown model: %s", req.PlayerModel))
-		return
-	}
 	if req.ReflectorModel == "" {
 		writeError(w, http.StatusBadRequest, "reflectorModel is required")
-		return
-	}
-	if !s.isValidModel(req.ReflectorModel) {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown model: %s", req.ReflectorModel))
 		return
 	}
 	if temperature < 0 || temperature > 2.0 {
@@ -727,15 +710,7 @@ func main() {
 
 	llmTimeout := time.Duration(cfg.LLMTimeoutSeconds) * time.Second
 
-	var activeAPIKey string
-	switch cfg.LLMProvider {
-	case "anthropic":
-		activeAPIKey = cfg.AnthropicAPIKey
-	case "openai":
-		activeAPIKey = cfg.OpenAIAPIKey
-	default:
-		activeAPIKey = cfg.OpenRouterAPIKey
-	}
+	activeAPIKey := apiKeyForProvider(cfg)
 	if activeAPIKey == "" {
 		log.Printf("WARN: no API key set for LLM provider %q — run creation will be unavailable", cfg.LLMProvider)
 	}

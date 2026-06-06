@@ -440,3 +440,145 @@ func NewClientForProvider(provider, apiKey string, timeout time.Duration) (Clien
 	}
 }
 
+// ─── Model listing ────────────────────────────────────────────────────────────
+
+// ListModels fetches the available model IDs from the given provider's API.
+// baseURL is only used for OpenRouter (pass "" to use the default).
+// Returns an error if the API call fails; callers should fall back to a hardcoded list.
+func ListModels(ctx context.Context, provider, apiKey, baseURL string, timeout time.Duration) ([]string, error) {
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	hc := &http.Client{Timeout: timeout}
+	switch provider {
+	case "openrouter":
+		if baseURL == "" {
+			baseURL = "https://openrouter.ai/api/v1"
+		}
+		return listOpenRouterModels(ctx, hc, apiKey, baseURL)
+	case "anthropic":
+		return listAnthropicModels(ctx, hc, apiKey)
+	case "openai":
+		return listOpenAIModels(ctx, hc, apiKey)
+	default:
+		return nil, fmt.Errorf("unknown provider: %q", provider)
+	}
+}
+
+// openRouterModelList is the /models response from OpenRouter.
+type openRouterModelList struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+func listOpenRouterModels(ctx context.Context, hc *http.Client, apiKey, baseURL string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var body openRouterModelList
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&body); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(body.Data))
+	for _, m := range body.Data {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids, nil
+}
+
+// anthropicModelList is the /models response from Anthropic.
+type anthropicModelList struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+func listAnthropicModels(ctx context.Context, hc *http.Client, apiKey string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.anthropic.com/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var body anthropicModelList
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(body.Data))
+	for _, m := range body.Data {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids, nil
+}
+
+// openAIModelList is the /models response from OpenAI.
+type openAIModelList struct {
+	Data []struct {
+		ID string `json:"id"`
+	} `json:"data"`
+}
+
+// openAIChatPrefixes are the model ID prefixes that indicate a chat-capable model.
+var openAIChatPrefixes = []string{"gpt-", "o1", "o3", "o4", "chatgpt-"}
+
+func listOpenAIModels(ctx context.Context, hc *http.Client, apiKey string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.openai.com/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var body openAIModelList
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&body); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0)
+	for _, m := range body.Data {
+		if isChatModel(m.ID) {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids, nil
+}
+
+func isChatModel(id string) bool {
+	for _, prefix := range openAIChatPrefixes {
+		if len(id) >= len(prefix) && id[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
+}
+
