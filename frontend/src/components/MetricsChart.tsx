@@ -19,9 +19,9 @@ interface Props {
 export default function MetricsChart({ generations, showBaselines }: Props) {
   const data = generations.map((g) => ({
     gen: `Gen ${g.genIndex}`,
-    solveRate: g.solveRate !== undefined ? +(g.solveRate * 100).toFixed(1) : null,
-    meanGuesses: g.meanGuesses !== undefined ? +g.meanGuesses.toFixed(2) : null,
-    meanInfoGain: g.meanInfoGain !== undefined ? +g.meanInfoGain.toFixed(2) : null,
+    solveRate: g.solveRate != null ? +(g.solveRate * 100).toFixed(1) : null,
+    meanGuesses: g.meanGuesses != null ? +g.meanGuesses.toFixed(2) : null,
+    meanInfoGain: g.meanInfoGain != null ? +g.meanInfoGain.toFixed(2) : null,
     promptLen: g.promptLen,
   }))
 

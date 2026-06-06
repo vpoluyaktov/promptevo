@@ -31,7 +31,7 @@ function buildCompareData(runs: RunWithGens[], metric: 'solveRate' | 'meanGuesse
     for (const r of runs) {
       const g = r.generationsData?.[i]
       if (g) {
-        const v = metric === 'solveRate' ? (g.solveRate !== undefined ? +(g.solveRate * 100).toFixed(1) : null) : (g.meanGuesses !== undefined ? +g.meanGuesses.toFixed(2) : null)
+        const v = metric === 'solveRate' ? (g.solveRate != null ? +(g.solveRate * 100).toFixed(1) : null) : (g.meanGuesses != null ? +g.meanGuesses.toFixed(2) : null)
         if (v !== null) row[`Run #${r.id}`] = v
       }
     }

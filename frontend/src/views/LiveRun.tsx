@@ -33,22 +33,54 @@ export default function LiveRun() {
   const [showDiff, setShowDiff] = useState(false)
   const [genSummaries, setGenSummaries] = useState<GenSummary[]>([])
   const [gamesCompleted, setGamesCompleted] = useState(0)
+  const [latestReasoning, setLatestReasoning] = useState('')
   const [isComplete, setIsComplete] = useState(false)
   const [streamActive, setStreamActive] = useState(true)
 
   useEffect(() => {
-    api.getRun(runId).then((r) => {
+    Promise.all([
+      api.getRun(runId),
+    ]).then(([r]) => {
       setRun(r)
-      if (r.status === 'completed' || r.status === 'failed') {
+
+      if (r.status === 'completed' || r.status === 'failed' || r.status === 'stopped') {
         setIsComplete(true)
         setStreamActive(false)
       }
-      // Pre-populate prompt from latest generation if available
-      if (r.generationsData && r.generationsData.length > 0) {
-        const last = r.generationsData[r.generationsData.length - 1]
-        setCurrentPrompt(last.promptText)
+
+      const gens = r.generationsData ?? []
+      // Generations with stats = completed; without = currently in progress
+      const completedGens = gens.filter((g) => g.solveRate != null)
+      const inProgressGen = gens.find((g) => g.solveRate == null)
+
+      // Restore gen summaries from completed generations
+      setGenSummaries(completedGens.map((g) => ({
+        index: g.genIndex,
+        solveRate: g.solveRate!,
+        meanGuesses: g.meanGuesses!,
+        prompt: g.promptText,
+        tokensUsed: g.tokensUsed,
+      })))
+
+      // Restore current prompt and prompt diff
+      const lastGen = gens[gens.length - 1]
+      if (lastGen) setCurrentPrompt(lastGen.promptText)
+
+      if (completedGens.length >= 2) {
+        setPrevPrompt(completedGens[completedGens.length - 2].promptText)
+        setShowDiff(true)
+      } else if (completedGens.length === 1 && inProgressGen) {
+        setPrevPrompt(completedGens[0].promptText)
+        if (inProgressGen.promptText !== completedGens[0].promptText) setShowDiff(true)
       }
-    }).catch(() => { /* run might not exist yet */ })
+
+      // Count games already completed in the in-progress generation
+      if (inProgressGen) {
+        api.listGames(runId, inProgressGen.genIndex).then((g) => {
+          setGamesCompleted(g.games.length)
+        }).catch(() => {})
+      }
+    }).catch(() => {})
   }, [runId])
 
   useRunStream(streamActive ? runId : null, (event) => {
@@ -61,13 +93,15 @@ export default function LiveRun() {
         const newFeedbacks = [...g.feedbacks, e.feedback]
         return { guesses: newGuesses, feedbacks: newFeedbacks, animateLastRow: true }
       })
+      if (e.reasoning) setLatestReasoning(e.reasoning)
     }
 
     if (event.type === 'game_end') {
       setGamesCompleted((n) => n + 1)
-      // Reset board for next game after short delay
+      // Reset board and reasoning for next game after short delay
       setTimeout(() => {
         setCurrentGame({ guesses: [], feedbacks: [], animateLastRow: false })
+        setLatestReasoning('')
       }, 1500)
     }
 
@@ -157,6 +191,14 @@ export default function LiveRun() {
             )}
           </div>
 
+          {latestReasoning && (
+            <div className="prompt-card" style={{ marginBottom: 12 }}>
+              <div className="prompt-card-header">Agent Thinking — Last Move</div>
+              <div className="prompt-card-body" style={{ fontFamily: 'monospace', fontSize: '0.8rem', whiteSpace: 'pre-wrap', maxHeight: 180, overflowY: 'auto' }}>
+                {latestReasoning}
+              </div>
+            </div>
+          )}
           {currentPrompt && (
             <div className="prompt-card">
               <div className="prompt-card-header">Current Strategy Prompt</div>

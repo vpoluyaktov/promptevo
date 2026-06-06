@@ -16,6 +16,7 @@ interface FormState {
   gamesPerGen: string
   temperature: string
   wordSampleSize: string
+  maxGuesses: string
   includeBaselines: boolean
 }
 
@@ -29,6 +30,7 @@ const DEFAULTS: FormState = {
   gamesPerGen: '10',
   temperature: '0.7',
   wordSampleSize: '20',
+  maxGuesses: '4',
   includeBaselines: false,
 }
 
@@ -66,6 +68,8 @@ function validate(f: FormState): Partial<Record<keyof FormState, string>> {
   if (isNaN(temp) || temp < 0 || temp > 2) errs.temperature = 'Must be 0.0–2.0'
   const wss = Number(f.wordSampleSize)
   if (!Number.isInteger(wss) || wss < 5 || wss > 100) errs.wordSampleSize = 'Must be 5–100'
+  const mg = Number(f.maxGuesses)
+  if (!Number.isInteger(mg) || mg < 2 || mg > 6) errs.maxGuesses = 'Must be 2–6'
   return errs
 }
 
@@ -119,6 +123,7 @@ export default function RunForm({ onSubmit, loading, error }: Props) {
       generations: Number(form.generations),
       gamesPerGen: Number(form.gamesPerGen),
       wordSampleSize: Number(form.wordSampleSize),
+      maxGuesses: Number(form.maxGuesses),
       includeBaselines: form.includeBaselines,
     })
   }
@@ -214,6 +219,25 @@ export default function RunForm({ onSubmit, loading, error }: Props) {
           <div className="form-hint">5–100 words per generation</div>
           {showErr('wordSampleSize') && <div className="form-error">{errs.wordSampleSize}</div>}
         </div>
+        <div className="form-group">
+          <label className="form-label">Max Guesses</label>
+          <select
+            className="form-control"
+            value={form.maxGuesses}
+            onChange={(e) => set('maxGuesses', e.target.value)}
+          >
+            <option value="2">2 — extreme</option>
+            <option value="3">3 — very hard</option>
+            <option value="4">4 — hard (recommended)</option>
+            <option value="5">5 — medium</option>
+            <option value="6">6 — standard</option>
+          </select>
+          <div className="form-hint">Lower = harder, more room to improve</div>
+          {showErr('maxGuesses') && <div className="form-error">{errs.maxGuesses}</div>}
+        </div>
+      </div>
+
+      <div className="form-row">
         <div className="form-group" style={{ paddingTop: 28 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
             <input

@@ -12,6 +12,26 @@ interface GameModalProps {
   onClose: () => void
 }
 
+const REASONING_PREVIEW = 160
+
+function ReasoningText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const short = text.length > REASONING_PREVIEW
+  return (
+    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: 4, fontFamily: 'monospace', whiteSpace: 'pre-wrap', borderLeft: '2px solid #e8e8e8', paddingLeft: 8 }}>
+      {expanded || !short ? text : text.slice(0, REASONING_PREVIEW) + '…'}
+      {short && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          style={{ display: 'block', marginTop: 2, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: '0.72rem', padding: 0 }}
+        >
+          {expanded ? 'Show less ▲' : 'Show more ▼'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function feedbackToArrays(guesses: Guess[]) {
   return {
     guessWords: guesses.map((g) => g.guess),
@@ -53,9 +73,7 @@ function GameModal({ game, onClose }: GameModalProps) {
                     </span>
                   </div>
                   {g.reasoningText ? (
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: 4, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-                      {g.reasoningText.slice(0, 300)}{g.reasoningText.length > 300 ? '…' : ''}
-                    </div>
+                    <ReasoningText text={g.reasoningText} />
                   ) : (
                     <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: 4, display: 'inline-block', background: '#f0f0f0', borderRadius: 3, padding: '1px 6px' }}>
                       fallback
