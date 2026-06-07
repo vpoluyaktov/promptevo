@@ -29,6 +29,7 @@ import (
 
 	"promptevo/internal/experiment"
 	"promptevo/internal/llm"
+	"promptevo/internal/reflector"
 	"promptevo/internal/store"
 	"promptevo/internal/wordle"
 )
@@ -187,6 +188,7 @@ func (s *server) buildRoutes() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
 			r.Get("/models", s.handleListModels)
+			r.Get("/prompts", s.handleGetDefaultPrompts)
 			r.Get("/runs", s.handleListRuns)
 			r.Post("/runs", s.handleCreateRun)
 			r.Get("/runs/{id}", s.handleGetRun)
@@ -271,6 +273,21 @@ func (s *server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(models)
 	writeJSON(w, http.StatusOK, map[string][]string{"models": models})
+}
+
+// handleGetDefaultPrompts handles GET /api/prompts?maxGuesses=N.
+// Returns the generation-0 player strategy prompt and the reflector system prompt.
+func (s *server) handleGetDefaultPrompts(w http.ResponseWriter, r *http.Request) {
+	maxGuesses := 3
+	if v := r.URL.Query().Get("maxGuesses"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 2 && n <= 6 {
+			maxGuesses = n
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"playerPrompt":    experiment.DefaultStrategyPrompt(maxGuesses),
+		"reflectorPrompt": reflector.SystemPrompt(),
+	})
 }
 
 // activeAPIKey returns the API key for the configured LLM provider.

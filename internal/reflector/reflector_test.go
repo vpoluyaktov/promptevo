@@ -183,7 +183,7 @@ func TestReflectorReflect_ValidResponse(t *testing.T) {
 		ViolationRate: 0.08,
 	}
 
-	newPrompt, _, ok, usage, err := r.Reflect(context.Background(), currentPrompt, stats)
+	newPrompt, _, _, ok, usage, err := r.Reflect(context.Background(), currentPrompt, stats)
 	if err != nil {
 		t.Fatalf("Reflect returned unexpected error: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestReflectorReflect_MalformedResponse_FallsBack(t *testing.T) {
 	}
 
 	currentPrompt := validPrompt
-	newPrompt, _, ok, _, err := r.Reflect(context.Background(), currentPrompt, reflector.GenerationStats{})
+	newPrompt, _, _, ok, _, err := r.Reflect(context.Background(), currentPrompt, reflector.GenerationStats{})
 	if err != nil {
 		t.Fatalf("Reflect returned unexpected error: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestReflectorReflect_EmptyResponse_FallsBack(t *testing.T) {
 	}
 
 	currentPrompt := validPrompt
-	newPrompt, _, ok, _, err := r.Reflect(context.Background(), currentPrompt, reflector.GenerationStats{})
+	newPrompt, _, _, ok, _, err := r.Reflect(context.Background(), currentPrompt, reflector.GenerationStats{})
 	if err != nil {
 		t.Fatalf("Reflect returned unexpected error: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestReflectorReflect_LLMError_ReturnsError(t *testing.T) {
 		Temperature: 0.7,
 	}
 
-	_, _, _, _, err := r.Reflect(context.Background(), validPrompt, reflector.GenerationStats{})
+	_, _, _, _, _, err := r.Reflect(context.Background(), validPrompt, reflector.GenerationStats{})
 	if err == nil {
 		t.Error("Reflect: expected error from LLM, got nil")
 	}
@@ -283,7 +283,7 @@ func TestReflectorReflect_CallsLLMWithCurrentPromptInMessages(t *testing.T) {
 	}
 
 	currentPrompt := validPrompt
-	_, _, _, _, _ = r.Reflect(context.Background(), currentPrompt, reflector.GenerationStats{
+	_, _, _, _, _, _ = r.Reflect(context.Background(), currentPrompt, reflector.GenerationStats{
 		SolveRate: 0.4,
 	})
 

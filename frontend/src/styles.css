@@ -184,10 +184,6 @@ tr.clickable:hover td { background: var(--bg-secondary); }
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-/* Force the diff viewer table to honour its container width so lines wrap */
-.prompt-diff-wrap table { table-layout: fixed; width: 100%; }
-.prompt-diff-wrap table td:last-child { overflow: hidden; word-break: break-word; white-space: pre-wrap; }
-.prompt-diff-wrap table pre { white-space: pre-wrap; word-break: break-word; }
 
 /* Live feed log */
 .feed-log {

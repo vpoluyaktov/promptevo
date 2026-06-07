@@ -42,8 +42,8 @@ export default function SolveRateCIChart({ data, baselines }: Props) {
             }}
           />
         ))}
-        <Area dataKey="ciRange" fill="#6aaa6433" stroke="none" name="CI Band" />
-        <Line dataKey="solveRate" stroke="#6aaa64" strokeWidth={2} dot={{ r: 4 }} name="Solve Rate" />
+        <Area type="monotone" dataKey="ciRange" fill="#6aaa6433" stroke="none" name="CI Band" />
+        <Line type="monotone" dataKey="solveRate" stroke="#6aaa64" strokeWidth={2} dot={{ r: 4 }} name="Solve Rate" />
       </ComposedChart>
     </ResponsiveContainer>
   )

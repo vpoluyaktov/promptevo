@@ -34,10 +34,15 @@ Rules:
   GREEN (G) = correct letter, correct position
   YELLOW (Y) = letter is in the word but wrong position
   GRAY (X) = letter is not in the word
+- A word may contain the same letter more than once. If you guess a letter twice and one copy gets G or Y while the other gets X, the word has exactly one of that letter.
+- You will be given a Remaining Candidates list each turn. Your guess MUST come from that list.
 
 Respond with your reasoning, then end with:
 GUESS: <WORD>`, maxGuesses)
 }
+
+// DefaultStrategyPrompt is the exported version for use by the HTTP layer.
+func DefaultStrategyPrompt(maxGuesses int) string { return defaultStrategyPrompt(maxGuesses) }
 
 // RunConfig is the subset of run parameters stored in config_json.
 type RunConfig struct {
@@ -223,6 +228,7 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 
 	for genIdx := 0; genIdx < run.Generations; genIdx++ {
 		genPromptLen := len([]rune(currentPrompt))
+		log.Printf("run %d gen %d: starting with prompt (%d chars): %.120s…", runID, genIdx, genPromptLen, currentPrompt)
 		gen := &store.Generation{
 			RunID:      runID,
 			GenIndex:   genIdx,
@@ -355,12 +361,18 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 				log.Printf("run %d gen %d: reflector error: %v", runID, genIdx, refErr)
 			}
 			if !ok {
+				log.Printf("run %d gen %d: reflector parse failed — reusing current prompt (%d chars)", runID, genIdx, len(currentPrompt))
 				o.Hub.Publish(runID, Event{
 					Type:    "error",
 					Message: "reflector output missing PROMPT delimiters; reusing previous prompt",
 				})
 			}
 			nextPrompt = np
+			if nextPrompt == currentPrompt {
+				log.Printf("run %d gen %d: prompt unchanged after reflection (%d chars)", runID, genIdx, len(nextPrompt))
+			} else {
+				log.Printf("run %d gen %d: prompt updated by reflector (%d → %d chars)", runID, genIdx, len(currentPrompt), len(nextPrompt))
+			}
 			reflectionText = &refText
 			if refSummary != "" {
 				reflectionSummary = &refSummary

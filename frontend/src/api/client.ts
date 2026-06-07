@@ -7,6 +7,7 @@ import type {
   ListGuessesResponse,
   CreateRunRequest,
   AnalyticsResponse,
+  DefaultPromptsResponse,
 } from './types'
 import { getToken, clearToken } from '../auth'
 
@@ -75,5 +76,9 @@ export const api = {
 
   getAnalytics(id: number): Promise<AnalyticsResponse> {
     return request(`/runs/${id}/analytics`)
+  },
+
+  getDefaultPrompts(maxGuesses: number): Promise<DefaultPromptsResponse> {
+    return request(`/prompts?maxGuesses=${maxGuesses}`)
   },
 }

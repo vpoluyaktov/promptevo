@@ -55,11 +55,10 @@ type Reflector struct {
 	Temperature float64
 }
 
-// Reflect returns the next strategy prompt and a diagnosis summary.
-// When the delimited prompt block cannot be parsed, ok is false and the caller
-// reuses currentPrompt. summary may be non-empty even when ok is false.
-func (r *Reflector) Reflect(ctx context.Context, currentPrompt string, stats GenerationStats) (newPrompt string, summary string, reflection string, ok bool, usage TokenUsage, err error) {
-	sysMsg := `You are an AI research assistant improving a Wordle-playing agent's strategy prompt.
+// SystemPrompt returns the reflector's LLM system message. Exported so the
+// HTTP layer can surface it in the UI without duplicating the string.
+func SystemPrompt() string {
+	return `You are an AI research assistant improving a Wordle-playing agent's strategy prompt.
 
 Your job: analyse performance data and make SURGICAL changes to the strategy content only.
 
@@ -70,6 +69,8 @@ STRICT RULES:
 - Do NOT restructure sections that already work
 - Every change must be directly justified by a specific failure pattern in the data
 - KEEP THE PROMPT AS SHORT AS POSSIBLE — every token in the strategy prompt is paid for on every single player move; unnecessary words, repetition, or verbose explanations directly inflate experiment cost with no benefit to game performance; ruthlessly cut any sentence that does not change player behaviour
+- ONE CHANGE PER GENERATION — fix at most one discrete strategy rule per pass; if multiple rules are broken, address the highest-impact violation only
+- CANDIDATE LIST — the player already receives a filtered Remaining Candidates list in every move's user message; do NOT instruct the player to build or maintain their own list; instead instruct the player to always pick their next guess from the provided list
 
 Output in exactly this order:
 
@@ -88,6 +89,13 @@ Output in exactly this order:
 ---PROMPT_END---
 
 The prompt must be 100–4000 characters.`
+}
+
+// Reflect returns the next strategy prompt and a diagnosis summary.
+// When the delimited prompt block cannot be parsed, ok is false and the caller
+// reuses currentPrompt. summary may be non-empty even when ok is false.
+func (r *Reflector) Reflect(ctx context.Context, currentPrompt string, stats GenerationStats) (newPrompt string, summary string, reflection string, ok bool, usage TokenUsage, err error) {
+	sysMsg := SystemPrompt()
 
 	userMsg := buildReflectorUserMessage(currentPrompt, stats)
 
@@ -204,6 +212,23 @@ func buildReflectorUserMessage(currentPrompt string, stats GenerationStats) stri
 		}
 	}
 
+	// Convergence guard: if violation rate hasn't improved >0.1/game over the
+	// last 3 generations, warn the reflector to try a structurally different fix.
+	if len(stats.History) >= 3 {
+		last3 := stats.History[len(stats.History)-3:]
+		oldestViolation := last3[0].ViolationRate
+		newestViolation := last3[len(last3)-1].ViolationRate
+		if oldestViolation-newestViolation < 0.1 {
+			sb.WriteString("## ⚠ Convergence Warning\n\n")
+			sb.WriteString(fmt.Sprintf(
+				"Violation rate has NOT improved by more than 0.1/game across the last 3 generations (Gen %d: %.2f → Gen %d: %.2f). "+
+					"Tweaking wording or thresholds is not working. You MUST introduce a structurally different instruction: "+
+					"add an explicit constraint-checking step, convert vague guidelines to a strict decision rule, or add a concrete counter-example rule.\n\n",
+				last3[0].GenIndex, oldestViolation, last3[len(last3)-1].GenIndex, newestViolation,
+			))
+		}
+	}
+
 	sb.WriteString("## Current Strategy Prompt\n\n")
 	sb.WriteString("```\n")
 	sb.WriteString(currentPrompt)
@@ -212,7 +237,7 @@ func buildReflectorUserMessage(currentPrompt string, stats GenerationStats) stri
 	sb.WriteString("## Your Task\n\n")
 	sb.WriteString("1. Identify specific strategic failures in the lost game examples above.\n")
 	sb.WriteString("2. Write a diagnosis summary (3–6 bullet points). The FIRST bullet MUST state the constraint violation rate for this generation and whether it improved or worsened vs the prior generation (e.g. '• Violation rate: 1.4/game ↑ from 1.2'). If this is generation 0 with no prior, state it as '• Violation rate: X.X/game (baseline)'. Remaining bullets MUST be rule-level, not move-level: name the rule that was broken, explain why it failed (e.g. instruction too vague, missing trigger condition, conflicting with another rule), and state what prompt change will fix it. Do NOT mention specific words, answers, turn numbers, or per-game sequences.\n")
-	sb.WriteString("3. Make targeted changes to the strategy content only — fix the specific tactical weaknesses you identified.\n")
+	sb.WriteString("3. Make ONE targeted change to fix the highest-impact strategic weakness identified. The player already receives a filtered Remaining Candidates list in every move — do NOT add instructions for the player to track candidates themselves; instead reinforce that the player must pick from the provided list.\n")
 	sb.WriteString("4. Do NOT change grammar, punctuation, or phrasing. Only change strategy instructions.\n")
 	sb.WriteString("5. SHORTEN wherever possible — remove any sentence that does not directly change player behaviour; the player pays tokens for every word on every turn.\n")
 	sb.WriteString("6. Output in this exact order:\n\n")

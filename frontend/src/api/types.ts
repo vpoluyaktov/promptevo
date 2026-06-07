@@ -187,6 +187,11 @@ export interface BaselineStat {
   solveRate: number
 }
 
+export interface DefaultPromptsResponse {
+  playerPrompt: string
+  reflectorPrompt: string
+}
+
 export interface AnalyticsResponse {
   runId: number
   maxGuesses: number

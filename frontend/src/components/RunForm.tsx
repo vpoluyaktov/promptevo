@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { api } from '../api/client'
-import type { CreateRunRequest } from '../api/types'
+import type { CreateRunRequest, DefaultPromptsResponse } from '../api/types'
 
 interface Props {
   onSubmit: (req: CreateRunRequest) => Promise<void>
@@ -27,8 +27,8 @@ const DEFAULTS: FormState = {
   reflectorModel: '',
   seed: String(Math.floor(Math.random() * 999999) + 1),
   generations: '20',
-  gamesPerGen: '25',
-  temperature: '0.7',
+  gamesPerGen: '50',
+  temperature: '0.3',
   wordSampleSize: '50',
   maxGuesses: '3',
   includeBaselines: false,
@@ -191,11 +191,60 @@ function FieldLabel({ children, fieldKey }: { children: React.ReactNode; fieldKe
   )
 }
 
+function PromptPreviewModal({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement
+    dialogRef.current?.focus()
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handler)
+    return () => { document.removeEventListener('keydown', handler); prev?.focus() }
+  }, [onClose])
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div
+        ref={dialogRef}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        style={{ maxWidth: 660, width: '90vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}
+      >
+        <button className="modal-close" onClick={onClose}>✕</button>
+        <h3 style={{ marginBottom: 12 }}>{title}</h3>
+        <pre style={{
+          flex: 1,
+          overflowY: 'auto',
+          fontFamily: 'monospace',
+          fontSize: '0.82rem',
+          lineHeight: 1.6,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          borderRadius: 6,
+          padding: '12px 14px',
+          color: 'var(--text)',
+          margin: 0,
+        }}>
+          {text}
+        </pre>
+        <div style={{ textAlign: 'right', marginTop: 12 }}>
+          <button className="btn btn-secondary btn-sm" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function RunForm({ onSubmit, loading, error }: Props) {
   const [models, setModels] = useState<string[]>([])
   const [form, setForm] = useState<FormState>({ ...DEFAULTS, ...loadSaved() })
   const [touched, setTouched] = useState<Partial<Record<keyof FormState, boolean>>>({})
   const [submitted, setSubmitted] = useState(false)
+  const [prompts, setPrompts] = useState<DefaultPromptsResponse | null>(null)
+  const [promptModal, setPromptModal] = useState<'player' | 'reflector' | null>(null)
 
   useEffect(() => {
     const saved = loadSaved()
@@ -218,6 +267,10 @@ export default function RunForm({ onSubmit, loading, error }: Props) {
       }))
     })
   }, [])
+
+  useEffect(() => {
+    api.getDefaultPrompts(Number(form.maxGuesses)).then(setPrompts).catch(() => {})
+  }, [form.maxGuesses])
 
   const errs = validate(form)
   const showErr = (k: keyof FormState) => (touched[k] || submitted) && errs[k]
@@ -369,9 +422,42 @@ export default function RunForm({ onSubmit, loading, error }: Props) {
         </div>
       </div>
 
-      <button type="submit" className="btn btn-primary" disabled={loading} style={{ marginTop: 8, padding: '10px 24px' }}>
-        {loading ? 'Launching…' : 'Launch Run'}
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+        <button type="submit" className="btn btn-primary" disabled={loading} style={{ padding: '10px 24px' }}>
+          {loading ? 'Launching…' : 'Launch Run'}
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={() => setPromptModal('player')}
+          disabled={!prompts}
+        >
+          Player Prompt
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={() => setPromptModal('reflector')}
+          disabled={!prompts}
+        >
+          Reflector Prompt
+        </button>
+      </div>
+
+      {promptModal === 'player' && prompts && (
+        <PromptPreviewModal
+          title={`Player Prompt (max ${form.maxGuesses} guesses)`}
+          text={prompts.playerPrompt}
+          onClose={() => setPromptModal(null)}
+        />
+      )}
+      {promptModal === 'reflector' && prompts && (
+        <PromptPreviewModal
+          title="Reflector System Prompt"
+          text={prompts.reflectorPrompt}
+          onClose={() => setPromptModal(null)}
+        />
+      )}
     </form>
   )
 }
