@@ -73,10 +73,12 @@ STRICT RULES:
 
 Output in exactly this order:
 
-1. A diagnosis summary wrapped in these delimiters (2–8 bullet points, plain text, no markdown headers):
+1. A diagnosis summary wrapped in these delimiters (3–8 bullet points, plain text, no markdown headers).
+   The FIRST bullet MUST report the constraint violation rate and trend (e.g. "• Violation rate: 1.4/game ↑ from 1.2").
+   Remaining bullets describe specific failure patterns from the game samples:
 ---SUMMARY_START---
+• Violation rate: X.X/game (↑/↓/= vs prior gen)
 • Key failure pattern 1
-• Key failure pattern 2
 • …
 ---SUMMARY_END---
 
@@ -164,8 +166,8 @@ func buildReflectorUserMessage(currentPrompt string, stats GenerationStats) stri
 		sb.WriteString("## History of All Prior Generations\n\n")
 		sb.WriteString("Use this to detect trends, avoid repeating failed tactics, and understand what has already been tried.\n\n")
 		for _, h := range stats.History {
-			sb.WriteString(fmt.Sprintf("### Gen %d — solve %.1f%% | mean guesses %.2f | info gain %.2f bits | violations %.1f%%",
-				h.GenIndex, h.SolveRate*100, h.MeanGuesses, h.MeanInfoGain, h.ViolationRate*100))
+			sb.WriteString(fmt.Sprintf("### Gen %d — solve %.1f%% | mean guesses %.2f | info gain %.2f bits | violations %.2f/game",
+				h.GenIndex, h.SolveRate*100, h.MeanGuesses, h.MeanInfoGain, h.ViolationRate))
 			if h.WinDistribution != "" {
 				sb.WriteString(fmt.Sprintf(" | dist: %s", h.WinDistribution))
 			}
@@ -180,7 +182,7 @@ func buildReflectorUserMessage(currentPrompt string, stats GenerationStats) stri
 	sb.WriteString(fmt.Sprintf("- Solve rate: %.1f%%\n", stats.SolveRate*100))
 	sb.WriteString(fmt.Sprintf("- Mean guesses used: %.2f\n", stats.MeanGuesses))
 	sb.WriteString(fmt.Sprintf("- Mean information gain: %.2f bits/game\n", stats.MeanInfoGain))
-	sb.WriteString(fmt.Sprintf("- Constraint violation rate: %.1f%%\n", stats.ViolationRate*100))
+	sb.WriteString(fmt.Sprintf("- Constraint violation rate: %.2f/game\n", stats.ViolationRate))
 	if stats.WinDistribution != "" {
 		sb.WriteString(fmt.Sprintf("- Win distribution: %s\n", stats.WinDistribution))
 	}
@@ -209,12 +211,13 @@ func buildReflectorUserMessage(currentPrompt string, stats GenerationStats) stri
 
 	sb.WriteString("## Your Task\n\n")
 	sb.WriteString("1. Identify specific strategic failures in the lost game examples above.\n")
-	sb.WriteString("2. Write a concise diagnosis summary (2–8 bullet points) listing the key failure patterns.\n")
+	sb.WriteString("2. Write a diagnosis summary (3–8 bullet points). The FIRST bullet MUST state the constraint violation rate for this generation and whether it improved or worsened vs the prior generation (e.g. '• Violation rate: 1.4/game ↑ from 1.2'). If this is generation 0 with no prior, state it as '• Violation rate: X.X/game (baseline)'. Remaining bullets list key failure patterns.\n")
 	sb.WriteString("3. Make targeted changes to the strategy content only — fix the specific tactical weaknesses you identified.\n")
 	sb.WriteString("4. Do NOT change grammar, punctuation, or phrasing. Only change strategy instructions.\n")
 	sb.WriteString("5. SHORTEN wherever possible — remove any sentence that does not directly change player behaviour; the player pays tokens for every word on every turn.\n")
 	sb.WriteString("6. Output in this exact order:\n\n")
 	sb.WriteString("---SUMMARY_START---\n")
+	sb.WriteString("• Violation rate: X.X/game (↑/↓/= vs prior gen or 'baseline' for gen 0)\n")
 	sb.WriteString("• <key failure pattern 1>\n")
 	sb.WriteString("• <key failure pattern 2>\n")
 	sb.WriteString("---SUMMARY_END---\n\n")

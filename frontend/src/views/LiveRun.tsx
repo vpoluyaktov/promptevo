@@ -17,6 +17,7 @@ interface GenSummary {
   index: number
   solveRate: number
   meanGuesses: number
+  violationRate?: number
   prompt: string
   tokensUsed?: number
 }
@@ -64,6 +65,7 @@ export default function LiveRun() {
         index: g.genIndex,
         solveRate: g.solveRate!,
         meanGuesses: g.meanGuesses!,
+        violationRate: g.violationRate,
         prompt: g.promptText,
         tokensUsed: g.tokensUsed,
       })))
@@ -138,6 +140,7 @@ export default function LiveRun() {
         index: e.genIndex,
         solveRate: e.solveRate,
         meanGuesses: e.meanGuesses,
+        violationRate: e.violationRate,
         prompt: e.prompt,
         tokensUsed: e.tokensUsed,
       }])
@@ -173,7 +176,7 @@ export default function LiveRun() {
           )}
         </div>
         <Link to={`/runs/${runId}`} className="btn btn-secondary btn-sm">
-          View Details →
+          View Statistics →
         </Link>
       </div>
 
@@ -225,6 +228,14 @@ export default function LiveRun() {
                   {(latestGen.solveRate * 100).toFixed(0)}%
                 </div>
                 <div className="big-stat-label">Solve Rate</div>
+              </div>
+            )}
+            {latestGen?.violationRate != null && (
+              <div>
+                <div className="big-stat" style={{ color: latestGen.violationRate > 1 ? 'var(--danger)' : 'var(--text-secondary)' }}>
+                  {latestGen.violationRate.toFixed(1)}
+                </div>
+                <div className="big-stat-label">Violations/game</div>
               </div>
             )}
           </div>

@@ -10,6 +10,7 @@ export type MetricKey =
   | 'tokenEfficiency'
   | 'reasoningVerbosity'
   | 'wordDifficulty'
+  | 'violationRate'
 
 export interface InfoContent {
   title: string
@@ -66,6 +67,12 @@ export const INFO_CONTENT: Record<MetricKey, InfoContent> = {
     whatItMeasures: 'For each game, the total number of characters of chain-of-thought reasoning the agent produced across all of its guesses, plotted against whether the game was won or lost, colored by generation.',
     whyItMatters: 'It probes the relationship between deliberation and success. Does the evolved prompt make the agent reason more, and does more reasoning actually help? A positive association (won games cluster at higher verbosity) supports reasoning-eliciting prompt changes; a negative or null association suggests verbosity is wasted tokens — or even a symptom of the model floundering on hard words. It also surfaces whether reflection is inadvertently inflating reasoning length over generations.',
     goodBad: 'There is no single target length; look at separation. If won and lost games occupy clearly different verbosity ranges, reasoning length is informative. If the two outcomes are fully intermixed, verbosity is not predictive and any prompt change that merely increases it is paying tokens for nothing. Watch for runaway verbosity in later generations with no solve-rate benefit — a sign the reflector is rewarding length over substance.',
+  },
+  violationRate: {
+    title: 'Constraint Violations per Game',
+    whatItMeasures: 'The average number of constraint violations the agent commits per game in each generation. A violation occurs when the agent guesses a word that contradicts known feedback: placing a letter in a position already marked GRAY, re-using a letter confirmed absent, or putting a YELLOW letter back in the same position it was marked wrong.',
+    whyItMatters: 'Violations are direct evidence that the agent is ignoring the feedback it has already received — the most fundamental failure mode in Wordle. A high violation rate means the prompt is not enforcing constraint-tracking reliably, regardless of solve rate. This metric separates \'lucky wins despite bad reasoning\' from \'wins because the agent actually understood the feedback\'. Prompt evolution should drive violations toward zero; a rising rate across generations means the evolved prompt is becoming harder for the player model to follow, often a sign of prompt bloat or conflicting rules.',
+    goodBad: 'Zero is ideal. Values below 0.5/game are acceptable for weaker player models. Values consistently above 1.0/game indicate the player is routinely ignoring constraints — the prompt\'s constraint-checking instructions are not effective, or the player model lacks the instruction-following capacity to execute them. A rising trend across generations is a strong warning sign: longer, more detailed prompts are confusing the model rather than helping it. If violations rise while solve rate stays flat, the evolved rules are adding noise, not signal.',
   },
   wordDifficulty: {
     title: 'Per-Word Difficulty',

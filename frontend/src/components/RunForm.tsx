@@ -26,10 +26,10 @@ const DEFAULTS: FormState = {
   playerModel: '',
   reflectorModel: '',
   seed: String(Math.floor(Math.random() * 999999) + 1),
-  generations: '5',
-  gamesPerGen: '10',
+  generations: '20',
+  gamesPerGen: '25',
   temperature: '0.7',
-  wordSampleSize: '20',
+  wordSampleSize: '50',
   maxGuesses: '3',
   includeBaselines: false,
 }
@@ -99,9 +99,9 @@ function validate(f: FormState): Partial<Record<keyof FormState, string>> {
   const seed = Number(f.seed)
   if (!f.seed || !Number.isInteger(seed) || seed < 1) errs.seed = 'Must be a positive integer'
   const gens = Number(f.generations)
-  if (!Number.isInteger(gens) || gens < 1 || gens > 20) errs.generations = 'Must be 1–20'
+  if (!Number.isInteger(gens) || gens < 1 || gens > 50) errs.generations = 'Must be 1–50'
   const gpg = Number(f.gamesPerGen)
-  if (!Number.isInteger(gpg) || gpg < 1 || gpg > 50) errs.gamesPerGen = 'Must be 1–50'
+  if (!Number.isInteger(gpg) || gpg < 1 || gpg > 500) errs.gamesPerGen = 'Must be 1–500'
   const temp = Number(f.temperature)
   if (isNaN(temp) || temp < 0 || temp > 2) errs.temperature = 'Must be 0.0–2.0'
   const wss = Number(f.wordSampleSize)
@@ -304,9 +304,9 @@ export default function RunForm({ onSubmit, loading, error }: Props) {
             className="form-control"
             value={form.generations}
             onChange={(e) => set('generations', e.target.value)}
-            min={1} max={20}
+            min={1} max={50}
           />
-          <div className="form-hint">1–20 generations</div>
+          <div className="form-hint">1–50 generations</div>
           {showErr('generations') && <div className="form-error">{errs.generations}</div>}
         </div>
         <div className="form-group">
@@ -316,9 +316,9 @@ export default function RunForm({ onSubmit, loading, error }: Props) {
             className="form-control"
             value={form.gamesPerGen}
             onChange={(e) => set('gamesPerGen', e.target.value)}
-            min={1} max={50}
+            min={1} max={500}
           />
-          <div className="form-hint">1–50 games</div>
+          <div className="form-hint">1–500 games</div>
           {showErr('gamesPerGen') && <div className="form-error">{errs.gamesPerGen}</div>}
         </div>
       </div>
