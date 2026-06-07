@@ -129,6 +129,9 @@ export default function Compare() {
                     <div className="text-secondary" style={{ fontSize: '0.75rem' }}>
                       seed {r.seed} · {r.generations} gens
                     </div>
+                    <div className="text-secondary" style={{ fontSize: '0.75rem' }}>
+                      temp {r.temperature} · {r.maxGuesses}g · {r.gamesPerGen}/gen
+                    </div>
                   </div>
                 </label>
               ))}

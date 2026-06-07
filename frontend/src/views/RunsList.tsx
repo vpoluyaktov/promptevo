@@ -98,6 +98,7 @@ export default function RunsList() {
                   <th className="col-mobile-hide">Reflector Model</th>
                   <th className="col-mobile-hide">Seed</th>
                   <th className="col-mobile-hide">Gens</th>
+                  <th className="col-mobile-hide">Config</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
@@ -113,6 +114,7 @@ export default function RunsList() {
                       <td className="font-mono text-sm col-mobile-hide">{r.reflectorModel}</td>
                       <td className="col-mobile-hide">{r.seed}</td>
                       <td className="col-mobile-hide">{r.generations}</td>
+                      <td className="col-mobile-hide text-secondary text-sm" style={{ whiteSpace: 'nowrap' }}>temp {r.temperature} · {r.maxGuesses}g · {r.gamesPerGen}/gen</td>
                       <td>{statusBadge(r.status)}</td>
                       <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap', display: 'flex', gap: 6 }}>
                         {r.status === 'running' && (
