@@ -49,6 +49,15 @@ export default function PromptDiff({ oldPrompt, newPrompt, title }: Props) {
           showDiffOnly={changesOnly}
           extraLinesSurroundingDiff={1}
           hideLineNumbers={false}
+          styles={{
+            diffContainer: {
+              tableLayout: 'fixed',
+              width: '100%',
+              '& pre': { whiteSpace: 'pre-wrap', wordBreak: 'break-word' },
+            },
+            content: { maxWidth: 0, wordBreak: 'break-word' },
+            contentText: { wordBreak: 'break-word' },
+          }}
         />
       </div>
     </div>
