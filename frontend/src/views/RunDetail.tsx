@@ -182,7 +182,7 @@ export default function RunDetail() {
             {run.convergence && <ConvergenceBadge value={run.convergence} />}
           </div>
           <p className="text-secondary text-sm">
-            {fmt(run.createdAt)} · {run.playerModel} → {run.reflectorModel} · seed {run.seed}
+            {fmt(run.createdAt)} · {run.playerModel} → {run.reflectorModel} · seed {run.seed} · temp {run.temperature} · {run.maxGuesses} guesses max
           </p>
         </div>
         <div className="flex gap-8">
