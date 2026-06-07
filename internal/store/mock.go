@@ -42,6 +42,7 @@ type MockStore struct {
 	ErrOpeningWordCounts        error
 	ErrReasoningVerbosityStats  error
 	ErrWordDifficultyStats      error
+	ErrBaselineOutcomeCounts    error
 }
 
 // NewMockStore returns an empty MockStore ready for use.
@@ -525,5 +526,39 @@ func (m *MockStore) WordDifficultyStats(_ context.Context, runID int64) ([]WordD
 		}
 		return out[i].Answer < out[j].Answer
 	})
+	return out, nil
+}
+
+// BaselineOutcomeCounts returns solve stats for non-llm agents.
+func (m *MockStore) BaselineOutcomeCounts(_ context.Context, runID int64) ([]BaselineSolveStat, error) {
+	if m.ErrBaselineOutcomeCounts != nil {
+		return nil, m.ErrBaselineOutcomeCounts
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	type acc struct {
+		total int
+		wins  int
+	}
+	accs := make(map[string]*acc)
+	for _, g := range m.games[runID] {
+		if g.AgentType == "llm" {
+			continue
+		}
+		if accs[g.AgentType] == nil {
+			accs[g.AgentType] = &acc{}
+		}
+		accs[g.AgentType].total++
+		if g.Won {
+			accs[g.AgentType].wins++
+		}
+	}
+
+	out := make([]BaselineSolveStat, 0, len(accs))
+	for agentType, a := range accs {
+		out = append(out, BaselineSolveStat{AgentType: agentType, Total: a.total, Wins: a.wins})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].AgentType < out[j].AgentType })
 	return out, nil
 }

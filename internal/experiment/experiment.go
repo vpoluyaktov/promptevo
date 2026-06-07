@@ -52,7 +52,7 @@ type Event struct {
 	GameID        int64    `json:"gameId,omitempty"`
 	RunID         int64    `json:"runId,omitempty"`
 	GenIndex      int      `json:"genIndex,omitempty"`
-	Turn          int      `json:"turn,omitempty"`
+	Turn          int      `json:"turn"` // always include: 0 is a valid turn index
 	Guess         string   `json:"guess,omitempty"`
 	Feedback      string   `json:"feedback,omitempty"`
 	InfoGain      float64  `json:"infoGain,omitempty"`
@@ -219,6 +219,7 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 
 	currentPrompt := defaultStrategyPrompt(run.MaxGuesses)
 	var solveRates []float64
+	var genHistory []reflector.PriorGeneration
 
 	for genIdx := 0; genIdx < run.Generations; genIdx++ {
 		genPromptLen := len([]rune(currentPrompt))
@@ -320,20 +321,22 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 		// ── Reflect (all but the last generation) ────────────────────────
 		var nextPrompt string
 		var reflectionText *string
+		var reflectionSummary *string
+
+		// Build win-by-turn distribution string (used for reflection and history).
+		var distParts []string
+		for t := 1; t <= run.MaxGuesses; t++ {
+			if n := winByTurn[t]; n > 0 {
+				distParts = append(distParts, fmt.Sprintf("turn %d: %d", t, n))
+			}
+		}
+		lostCount := len(results) - int(solveRate*float64(len(results))+0.5)
+		if lostCount > 0 {
+			distParts = append(distParts, fmt.Sprintf("lost: %d", lostCount))
+		}
+		winDist := strings.Join(distParts, " | ")
 
 		if genIdx < run.Generations-1 {
-			// Build win-by-turn distribution string.
-			var distParts []string
-			for t := 1; t <= run.MaxGuesses; t++ {
-				if n := winByTurn[t]; n > 0 {
-					distParts = append(distParts, fmt.Sprintf("turn %d: %d", t, n))
-				}
-			}
-			lostCount := len(results) - int(solveRate*float64(len(results))+0.5)
-			if lostCount > 0 {
-				distParts = append(distParts, fmt.Sprintf("lost: %d", lostCount))
-			}
-			winDist := strings.Join(distParts, " | ")
 
 			stats := reflector.GenerationStats{
 				GenIndex:        genIdx,
@@ -344,8 +347,9 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 				WinDistribution: winDist,
 				FailedSamples:   failedSamples,
 				WonSamples:      wonSamples,
+				History:         genHistory,
 			}
-			np, refText, ok, refUsage, refErr := refl.Reflect(ctx, currentPrompt, stats)
+			np, refSummary, refText, ok, refUsage, refErr := refl.Reflect(ctx, currentPrompt, stats)
 			reflectorTokens += refUsage.InputTokens + refUsage.OutputTokens
 			if refErr != nil {
 				log.Printf("run %d gen %d: reflector error: %v", runID, genIdx, refErr)
@@ -358,6 +362,9 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 			}
 			nextPrompt = np
 			reflectionText = &refText
+			if refSummary != "" {
+				reflectionSummary = &refSummary
+			}
 		} else {
 			// Final generation — no reflection.
 			nextPrompt = currentPrompt
@@ -372,6 +379,7 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 		gen.ReflectorTokens = reflectorTokens
 		gen.TokensUsed = playerTokens + reflectorTokens
 		gen.ReflectionText = reflectionText
+		gen.ReflectionSummary = reflectionSummary
 		if err := o.Store.UpdateGenerationStats(ctx, gen); err != nil {
 			log.Printf("run %d gen %d: update stats: %v", runID, genIdx, err)
 		}
@@ -388,6 +396,15 @@ func (o *Orchestrator) runExperiment(ctx context.Context, runID int64) error {
 			TokensUsed:    gen.TokensUsed,
 		})
 
+		genHistory = append(genHistory, reflector.PriorGeneration{
+			GenIndex:        genIdx,
+			SolveRate:       solveRate,
+			MeanGuesses:     meanGuesses,
+			MeanInfoGain:    meanInfoGain,
+			ViolationRate:   violationRate,
+			WinDistribution: winDist,
+			Prompt:          currentPrompt,
+		})
 		currentPrompt = nextPrompt
 
 		// Yield briefly to avoid starving other goroutines.

@@ -35,7 +35,8 @@ type Generation struct {
 	GenIndex       int      `json:"genIndex"`
 	PromptText     string   `json:"promptText"`
 	PromptLen      int      `json:"promptLen"`
-	ReflectionText *string  `json:"reflectionText"`
+	ReflectionText    *string `json:"reflectionText"`
+	ReflectionSummary *string `json:"reflectionSummary"`
 	SolveRate      *float64 `json:"solveRate"`
 	MeanGuesses    *float64 `json:"meanGuesses"`
 	MeanInfoGain   *float64 `json:"meanInfoGain"`
@@ -108,6 +109,13 @@ type WordDifficultyStat struct {
 	Wins   int
 }
 
+// BaselineSolveStat is one row from BaselineOutcomeCounts.
+type BaselineSolveStat struct {
+	AgentType string
+	Total     int
+	Wins      int
+}
+
 // Store is the full persistence contract used by handlers and the orchestrator.
 type Store interface {
 	// lifecycle
@@ -141,4 +149,6 @@ type Store interface {
 	OpeningWordCounts(ctx context.Context, runID int64) ([]OpeningWordCount, error)
 	ReasoningVerbosityStats(ctx context.Context, runID int64) ([]ReasoningStat, error)
 	WordDifficultyStats(ctx context.Context, runID int64) ([]WordDifficultyStat, error)
+	// baseline agents (agent_type != 'llm', gen 0 only)
+	BaselineOutcomeCounts(ctx context.Context, runID int64) ([]BaselineSolveStat, error)
 }

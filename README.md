@@ -8,7 +8,57 @@ weight updates and no human in the loop?
 
 ---
 
-## 1. Research framing
+## 1. Quick Start
+
+Run promptevo with **Docker Compose using pre-built images from Docker Hub** — no
+git clone and no local build required. You only need Docker (with the Compose
+plugin) and two files: a `.env` and the `docker-compose.yml`.
+
+**1. Create a `.env` file.** If you have the repo, copy `.env.example`; otherwise
+create `.env` by hand with the variables you need:
+
+- `LLM_PROVIDER` — the active provider: `openrouter`, `anthropic`, or `openai`.
+- `OPENROUTER_API_KEY` — required when using OpenRouter.
+- `ANTHROPIC_API_KEY` — required when using Anthropic direct.
+- `OPENAI_API_KEY` — required when using OpenAI direct.
+- `AUTH_USERNAME` and `AUTH_PASSWORD` — recommended for any public deployment;
+  leave blank to disable login on a local/trusted network.
+
+Minimal example using OpenRouter (the default provider):
+
+```bash
+# .env
+LLM_PROVIDER=openrouter
+OPENROUTER_API_KEY=sk-or-...
+
+# recommended for any public deployment
+AUTH_USERNAME=admin
+AUTH_PASSWORD=change-me
+```
+
+**2. Download only the `docker-compose.yml`** (no need to clone the repo):
+
+```bash
+curl -O https://raw.githubusercontent.com/vpoluyaktov/promptevo/main/docker-compose.yml
+```
+
+**3. Start the app.** Docker pulls the pre-built images from Docker Hub
+automatically — `vpoluyaktov/promptevo-backend:latest` and
+`vpoluyaktov/promptevo-frontend:latest`:
+
+```bash
+docker compose up -d
+```
+
+**4. Open** <http://localhost:3001>.
+
+> The app boots even **without** an API key — you can browse the UI and any past
+> runs. Starting a *new* run requires the active provider's API key; without it
+> `POST /api/runs` returns `503 LLM gateway not configured`.
+
+---
+
+## 2. Research framing
 
 **In-context meta-learning** here means self-improvement that lives entirely in the
 prompt. The agent is never fine-tuned. Instead, after each *generation* of games it
@@ -43,7 +93,7 @@ model lift a weaker *player* model?
 
 ---
 
-## 2. Architecture
+## 3. Architecture
 
 ```
         ┌─────────────────────────────────────────────┐
@@ -92,7 +142,7 @@ model lift a weaker *player* model?
 
 ---
 
-## 3. Quickstart
+## 4. Quickstart
 
 ```bash
 git clone <repo-url>
@@ -101,14 +151,19 @@ cp .env.example .env
 # Edit .env:
 #   - Set LLM_PROVIDER and the matching API key (see "Switching providers" below)
 #   - Set AUTH_USERNAME + AUTH_PASSWORD to protect the app (recommended)
-docker compose up --build
+docker compose up -d
 # Open http://localhost:3001
 ```
 
-The first build compiles the Go binary and the React bundle, so it takes a minute.
-On subsequent runs Docker layer caching makes it fast. The backend comes up first;
-the frontend waits for the backend's health check to pass before starting (see
+By default `docker compose up` **pulls the pre-built images from Docker Hub**
+(`vpoluyaktov/promptevo-backend:latest` and `vpoluyaktov/promptevo-frontend:latest`)
+— no local build step. The backend comes up first; the frontend waits for the
+backend's health check to pass before starting (see
 `depends_on: condition: service_healthy`).
+
+Local builds are only needed for **development** when you want to run your own code
+changes — see §12 (Development setup) for the native edit loop, or use
+`docker compose up --build` to build the images from source instead of pulling them.
 
 > The app boots even **without** an API key — you can browse the UI and past runs.
 > Starting a *new* run requires the active provider's API key; without it `POST /api/runs`
@@ -116,7 +171,7 @@ the frontend waits for the backend's health check to pass before starting (see
 
 ---
 
-## 4. Authentication
+## 5. Authentication
 
 When `AUTH_USERNAME` and `AUTH_PASSWORD` are set in `.env`, the app requires a
 login before any API call can be made. A login form is shown automatically; after
@@ -130,7 +185,7 @@ signing in, the token is stored in `localStorage` and included on every request.
 
 ---
 
-## 5. Switching LLM providers
+## 6. Switching LLM providers
 
 The app supports three providers. Only one is active at a time, selected by
 `LLM_PROVIDER` in `.env`:
@@ -157,7 +212,7 @@ models. For a fair cross-model comparison, run two experiments with the **same s
 
 ---
 
-## 6. Running an experiment
+## 7. Running an experiment
 
 1. **Open the UI** at <http://localhost:3000>. The landing page is the **Runs
    list** — every run you have started, newest first, with its models, config, and
@@ -189,7 +244,7 @@ models. For a fair cross-model comparison, run two experiments with the **same s
 
 ---
 
-## 7. Interpreting the dashboards
+## 8. Interpreting the dashboards
 
 - **Solve rate** — the fraction of games won (answer found within six guesses) in a
   generation, in `[0, 1]`. This is the primary "is the agent getting better?" axis.
@@ -223,7 +278,7 @@ models. For a fair cross-model comparison, run two experiments with the **same s
 
 ---
 
-## 8. Cross-model comparison guide
+## 9. Cross-model comparison guide
 
 To compare two models fairly, hold *everything except the model* constant:
 
@@ -244,7 +299,7 @@ better self-edits for the same player.
 
 ---
 
-## 9. Word list source
+## 10. Word list source
 
 `data/answers.txt` (the answer pool) and `data/guesses.txt` (the valid-guess pool,
 a superset of the answers) ship as **placeholder** curated lists of real five-letter
@@ -265,7 +320,7 @@ rebuild.
 
 ---
 
-## 10. Reproducibility
+## 11. Reproducibility
 
 - **Seeded word sampling.** Each run draws `wordSampleSize` answers via a
   deterministic Fisher–Yates shuffle of the answer pool seeded by the run's `seed`.
@@ -282,7 +337,7 @@ rebuild.
 
 ---
 
-## 11. Development setup (without Docker)
+## 12. Development setup (without Docker)
 
 Run the two services natively for a fast edit loop.
 
@@ -315,7 +370,7 @@ Vite URL. In the Docker deployment nginx fills this role, so the SPA uses relati
 
 ---
 
-## 12. Configuration reference
+## 13. Configuration reference
 
 All backend configuration is via environment variables (env → struct, with
 defaults). In Docker these are set on the `backend` service in `docker-compose.yml`

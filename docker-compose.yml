@@ -1,12 +1,10 @@
 services:
   backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
+    image: ${BACKEND_IMAGE:-vpoluyaktov/promptevo-backend}:latest
     environment:
       # ── LLM Provider ──────────────────────────────────────────────────────
       # Switch provider by changing LLM_PROVIDER and setting the matching key,
-      # then run: docker compose up --build -d
+      # then restart: docker compose up -d
       #
       # Options: openrouter | anthropic | openai
       - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
@@ -39,9 +37,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: ${FRONTEND_IMAGE:-vpoluyaktov/promptevo-frontend}:latest
     ports:
       - "3001:80"
     depends_on:

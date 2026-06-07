@@ -53,10 +53,12 @@ func (s *SQLiteStore) Migrate(ctx context.Context) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 	// Add max_guesses column to runs (ignored if it already exists).
-	_, _ = s.db.ExecContext(ctx, `ALTER TABLE runs ADD COLUMN max_guesses INTEGER NOT NULL DEFAULT 4`)
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE runs ADD COLUMN max_guesses INTEGER NOT NULL DEFAULT 3`)
 	// Add token-split columns to generations (ignored if they already exist).
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE generations ADD COLUMN player_tokens INTEGER NOT NULL DEFAULT 0`)
 	_, _ = s.db.ExecContext(ctx, `ALTER TABLE generations ADD COLUMN reflector_tokens INTEGER NOT NULL DEFAULT 0`)
+	// Add reflection_summary column (ignored if it already exists).
+	_, _ = s.db.ExecContext(ctx, `ALTER TABLE generations ADD COLUMN reflection_summary TEXT`)
 	return nil
 }
 
@@ -199,16 +201,17 @@ func (s *SQLiteStore) CreateGeneration(ctx context.Context, g *Generation) (int6
 func (s *SQLiteStore) UpdateGenerationStats(ctx context.Context, g *Generation) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE generations
-		SET reflection_text  = ?,
-		    solve_rate        = ?,
-		    mean_guesses      = ?,
-		    mean_info_gain    = ?,
-		    violation_rate    = ?,
-		    tokens_used       = ?,
-		    player_tokens     = ?,
-		    reflector_tokens  = ?
+		SET reflection_text    = ?,
+		    reflection_summary = ?,
+		    solve_rate         = ?,
+		    mean_guesses       = ?,
+		    mean_info_gain     = ?,
+		    violation_rate     = ?,
+		    tokens_used        = ?,
+		    player_tokens      = ?,
+		    reflector_tokens   = ?
 		WHERE id = ?`,
-		g.ReflectionText, g.SolveRate, g.MeanGuesses, g.MeanInfoGain,
+		g.ReflectionText, g.ReflectionSummary, g.SolveRate, g.MeanGuesses, g.MeanInfoGain,
 		g.ViolationRate, g.TokensUsed, g.PlayerTokens, g.ReflectorTokens, g.ID,
 	)
 	return err
@@ -217,7 +220,7 @@ func (s *SQLiteStore) UpdateGenerationStats(ctx context.Context, g *Generation) 
 func (s *SQLiteStore) ListGenerations(ctx context.Context, runID int64) ([]*Generation, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, run_id, gen_index, prompt_text, prompt_len,
-		       reflection_text, solve_rate, mean_guesses, mean_info_gain,
+		       reflection_text, reflection_summary, solve_rate, mean_guesses, mean_info_gain,
 		       violation_rate, tokens_used, player_tokens, reflector_tokens
 		FROM generations
 		WHERE run_id = ?
@@ -232,7 +235,7 @@ func (s *SQLiteStore) ListGenerations(ctx context.Context, runID int64) ([]*Gene
 		g := &Generation{}
 		if err := rows.Scan(
 			&g.ID, &g.RunID, &g.GenIndex, &g.PromptText, &g.PromptLen,
-			&g.ReflectionText, &g.SolveRate, &g.MeanGuesses, &g.MeanInfoGain,
+			&g.ReflectionText, &g.ReflectionSummary, &g.SolveRate, &g.MeanGuesses, &g.MeanInfoGain,
 			&g.ViolationRate, &g.TokensUsed, &g.PlayerTokens, &g.ReflectorTokens,
 		); err != nil {
 			return nil, err
@@ -487,6 +490,32 @@ func (s *SQLiteStore) WordDifficultyStats(ctx context.Context, runID int64) ([]W
 			return nil, err
 		}
 		out = append(out, wd)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *SQLiteStore) BaselineOutcomeCounts(ctx context.Context, runID int64) ([]BaselineSolveStat, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT agent_type, COUNT(*) AS total, SUM(CASE WHEN won THEN 1 ELSE 0 END) AS wins
+		FROM games
+		WHERE run_id = ? AND agent_type != 'llm'
+		GROUP BY agent_type
+		ORDER BY agent_type ASC`, runID)
+	if err != nil {
+		return nil, fmt.Errorf("baseline outcome counts: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]BaselineSolveStat, 0)
+	for rows.Next() {
+		var bs BaselineSolveStat
+		if err := rows.Scan(&bs.AgentType, &bs.Total, &bs.Wins); err != nil {
+			return nil, err
+		}
+		out = append(out, bs)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

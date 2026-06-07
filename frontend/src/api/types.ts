@@ -24,6 +24,7 @@ export interface Generation {
   promptText: string
   promptLen: number
   reflectionText?: string
+  reflectionSummary?: string
   solveRate?: number
   meanGuesses?: number
   meanInfoGain?: number
@@ -179,6 +180,13 @@ export interface WordDifficultyPoint {
   wins: number
   winRate: number
 }
+export interface BaselineStat {
+  agentType: string
+  total: number
+  wins: number
+  solveRate: number
+}
+
 export interface AnalyticsResponse {
   runId: number
   maxGuesses: number
@@ -191,4 +199,5 @@ export interface AnalyticsResponse {
   tokenEfficiency: TokenEfficiencyPoint[]
   reasoningVerbosity: ReasoningPoint[]
   wordDifficulty: WordDifficultyPoint[]
+  baselineStats: BaselineStat[]
 }

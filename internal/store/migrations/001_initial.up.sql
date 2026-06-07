@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS runs (
     generations INTEGER NOT NULL,
     games_per_gen INTEGER NOT NULL,
     word_sample_size INTEGER NOT NULL,
-    max_guesses INTEGER NOT NULL DEFAULT 4,
+    max_guesses INTEGER NOT NULL DEFAULT 3,
     status TEXT NOT NULL DEFAULT 'pending',
     config_json TEXT NOT NULL DEFAULT '{}'
 );
@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS generations (
     prompt_text TEXT NOT NULL,
     prompt_len INTEGER NOT NULL,
     reflection_text TEXT,
+    reflection_summary TEXT,
     solve_rate REAL,
     mean_guesses REAL,
     mean_info_gain REAL,

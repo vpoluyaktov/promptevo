@@ -445,6 +445,14 @@ type AnalyticsResponse struct {
 	TokenEfficiency     []TokenEfficiencyPoint `json:"tokenEfficiency"`
 	ReasoningVerbosity  []ReasoningPoint       `json:"reasoningVerbosity"`
 	WordDifficulty      []WordDifficultyPoint  `json:"wordDifficulty"`
+	BaselineStats       []BaselineStatPoint    `json:"baselineStats"`
+}
+
+type BaselineStatPoint struct {
+	AgentType string  `json:"agentType"`
+	Total     int     `json:"total"`
+	Wins      int     `json:"wins"`
+	SolveRate float64 `json:"solveRate"`
 }
 
 type AnalyticsMeta struct {
@@ -781,6 +789,12 @@ func (s *server) computeAnalytics(ctx context.Context, run *store.Run) (*Analyti
 		return nil, fmt.Errorf("list games for replay: %w", err)
 	}
 
+	// 8. Baseline agent outcomes
+	baselineRows, err := s.store.BaselineOutcomeCounts(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("baseline outcome counts: %w", err)
+	}
+
 	// ── Build SolveRateCI + WinDistribution from outcomeCounts ───────────────
 
 	type genAcc struct {
@@ -962,6 +976,20 @@ func (s *server) computeAnalytics(ctx context.Context, run *store.Run) (*Analyti
 		genSet[oc.GenIndex] = struct{}{}
 	}
 
+	baselineStats := make([]BaselineStatPoint, 0, len(baselineRows))
+	for _, b := range baselineRows {
+		var sr float64
+		if b.Total > 0 {
+			sr = round3(float64(b.Wins) / float64(b.Total))
+		}
+		baselineStats = append(baselineStats, BaselineStatPoint{
+			AgentType: b.AgentType,
+			Total:     b.Total,
+			Wins:      b.Wins,
+			SolveRate: sr,
+		})
+	}
+
 	return &AnalyticsResponse{
 		RunID:               runID,
 		MaxGuesses:          maxGuesses,
@@ -974,6 +1002,7 @@ func (s *server) computeAnalytics(ctx context.Context, run *store.Run) (*Analyti
 		TokenEfficiency:     tokenEfficiency,
 		ReasoningVerbosity:  reasoningVerbosity,
 		WordDifficulty:      wordDifficulty,
+		BaselineStats:       baselineStats,
 	}, nil
 }
 

@@ -14,7 +14,7 @@ interface GameModalProps {
 
 const REASONING_PREVIEW = 160
 
-function ReasoningText({ text }: { text: string }) {
+function ReasoningText({ text, guess }: { text: string; guess: string }) {
   const [expanded, setExpanded] = useState(false)
   const short = text.length > REASONING_PREVIEW
   return (
@@ -28,6 +28,9 @@ function ReasoningText({ text }: { text: string }) {
           {expanded ? 'Show less ▲' : 'Show more ▼'}
         </button>
       )}
+      <div style={{ marginTop: 6, color: 'var(--accent)', fontWeight: 700, letterSpacing: '0.05em' }}>
+        → {guess.toUpperCase()}
+      </div>
     </div>
   )
 }
@@ -73,7 +76,7 @@ function GameModal({ game, onClose }: GameModalProps) {
                     </span>
                   </div>
                   {g.reasoningText ? (
-                    <ReasoningText text={g.reasoningText} />
+                    <ReasoningText text={g.reasoningText} guess={g.guess} />
                   ) : (
                     <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: 4, display: 'inline-block', background: '#f0f0f0', borderRadius: 3, padding: '1px 6px' }}>
                       fallback

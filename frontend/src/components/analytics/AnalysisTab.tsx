@@ -43,7 +43,7 @@ export default function AnalysisTab({ runId, generations, maxGuesses }: Props) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       <ChartCard title="Solve Rate with 95% CI" metricKey="solveRateCI" subtitle={`${data.meta.totalLlmGames} LLM games · ${data.meta.generations} generations`}>
-        <SolveRateCIChart data={data.solveRateCI} />
+        <SolveRateCIChart data={data.solveRateCI} baselines={data.baselineStats} />
       </ChartCard>
       <ChartCard title="Win Distribution by Turn" metricKey="winDistribution">
         <WinDistributionChart data={data.winDistribution} maxGuesses={maxGuesses} />

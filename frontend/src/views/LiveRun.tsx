@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { useRunStream } from '../hooks/useRunStream'
 import GameBoard from '../components/GameBoard'
 import LiveFeed from '../components/LiveFeed'
 import PromptDiff from '../components/PromptDiff'
-import type { Run, SSEEvent, SSEGuess, SSEGenEnd } from '../api/types'
+import type { Run, SSEEvent, SSEGuess, SSEGameEnd, SSEGenEnd } from '../api/types'
 
 interface CurrentGame {
   guesses: string[]
@@ -28,11 +28,17 @@ export default function LiveRun() {
   const [run, setRun] = useState<Run | null>(null)
   const [events, setEvents] = useState<SSEEvent[]>([])
   const [currentGame, setCurrentGame] = useState<CurrentGame>({ guesses: [], feedbacks: [], animateLastRow: false })
+  const currentGameIdRef = useRef<number | null>(null)
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [currentPrompt, setCurrentPrompt] = useState('')
   const [prevPrompt, setPrevPrompt] = useState('')
   const [showDiff, setShowDiff] = useState(false)
   const [genSummaries, setGenSummaries] = useState<GenSummary[]>([])
   const [gamesCompleted, setGamesCompleted] = useState(0)
+  const [gamesWon, setGamesWon] = useState(0)
+  const [gamesLost, setGamesLost] = useState(0)
+  // Deduplicates game_end events vs initial listGames load (avoids double-count on reconnect).
+  const countedGameIdsRef = useRef<Set<number>>(new Set())
   const [latestReasoning, setLatestReasoning] = useState('')
   const [isComplete, setIsComplete] = useState(false)
   const [streamActive, setStreamActive] = useState(true)
@@ -74,34 +80,55 @@ export default function LiveRun() {
         if (inProgressGen.promptText !== completedGens[0].promptText) setShowDiff(true)
       }
 
-      // Count games already completed in the in-progress generation
+      // Count games already completed in the in-progress generation (LLM only).
+      // Seeds the dedup set so SSE game_end events for the same games aren't double-counted.
       if (inProgressGen) {
         api.listGames(runId, inProgressGen.genIndex).then((g) => {
-          setGamesCompleted(g.games.length)
+          const llmGames = g.games.filter((game) => game.agentType === 'llm')
+          llmGames.forEach((game) => countedGameIdsRef.current.add(game.id))
+          setGamesCompleted(llmGames.length)
+          setGamesWon(llmGames.filter((game) => game.won).length)
+          setGamesLost(llmGames.filter((game) => !game.won).length)
         }).catch(() => {})
       }
     }).catch(() => {})
   }, [runId])
 
   useRunStream(streamActive ? runId : null, (event) => {
-    setEvents((prev) => [...prev.slice(-200), event])
+    setEvents((prev) => [...prev.slice(-2000), event])
 
     if (event.type === 'guess') {
       const e = event as SSEGuess
-      setCurrentGame((g) => {
-        const newGuesses = [...g.guesses, e.guess]
-        const newFeedbacks = [...g.feedbacks, e.feedback]
-        return { guesses: newGuesses, feedbacks: newFeedbacks, animateLastRow: true }
-      })
+      if (currentGameIdRef.current !== null && currentGameIdRef.current !== e.gameId) {
+        // New game started before the reset timer fired — cancel it and start fresh
+        if (resetTimerRef.current !== null) {
+          clearTimeout(resetTimerRef.current)
+          resetTimerRef.current = null
+        }
+        setCurrentGame({ guesses: [e.guess], feedbacks: [e.feedback], animateLastRow: true })
+      } else {
+        setCurrentGame((g) => ({
+          guesses: [...g.guesses, e.guess],
+          feedbacks: [...g.feedbacks, e.feedback],
+          animateLastRow: true,
+        }))
+      }
+      currentGameIdRef.current = e.gameId
       if (e.reasoning) setLatestReasoning(e.reasoning)
     }
 
     if (event.type === 'game_end') {
+      const ge = event as SSEGameEnd
+      if (countedGameIdsRef.current.has(ge.gameId)) return
+      countedGameIdsRef.current.add(ge.gameId)
       setGamesCompleted((n) => n + 1)
-      // Reset board and reasoning for next game after short delay
-      setTimeout(() => {
+      if (ge.won) setGamesWon((n) => n + 1)
+      else setGamesLost((n) => n + 1)
+      if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = setTimeout(() => {
+        currentGameIdRef.current = null
         setCurrentGame({ guesses: [], feedbacks: [], animateLastRow: false })
-        setLatestReasoning('')
+        resetTimerRef.current = null
       }, 1500)
     }
 
@@ -118,6 +145,9 @@ export default function LiveRun() {
       setCurrentPrompt(e.prompt)
       setShowDiff(true)
       setGamesCompleted(0)
+      setGamesWon(0)
+      setGamesLost(0)
+      countedGameIdsRef.current = new Set()
     }
 
     if (event.type === 'run_end') {
@@ -172,7 +202,7 @@ export default function LiveRun() {
         {/* Right: Stats */}
         <div className="card">
           <h3 style={{ marginBottom: 16, fontWeight: 600, fontSize: '1rem' }}>Progress</h3>
-          <div style={{ display: 'flex', gap: 24, marginBottom: 24 }}>
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 24 }}>
             <div>
               <div className="big-stat">{genSummaries.length}</div>
               <div className="big-stat-label">Gens Done</div>
@@ -180,6 +210,14 @@ export default function LiveRun() {
             <div>
               <div className="big-stat">{gamesCompleted}</div>
               <div className="big-stat-label">Games / {totalGames}</div>
+            </div>
+            <div>
+              <div className="big-stat" style={{ color: 'var(--accent)' }}>{gamesWon}</div>
+              <div className="big-stat-label">Won</div>
+            </div>
+            <div>
+              <div className="big-stat" style={{ color: 'var(--danger)' }}>{gamesLost}</div>
+              <div className="big-stat-label">Lost</div>
             </div>
             {latestGen && (
               <div>
@@ -191,14 +229,12 @@ export default function LiveRun() {
             )}
           </div>
 
-          {latestReasoning && (
-            <div className="prompt-card" style={{ marginBottom: 12 }}>
-              <div className="prompt-card-header">Agent Thinking — Last Move</div>
-              <div className="prompt-card-body" style={{ fontFamily: 'monospace', fontSize: '0.8rem', whiteSpace: 'pre-wrap', maxHeight: 180, overflowY: 'auto' }}>
-                {latestReasoning}
-              </div>
+          <div className="prompt-card" style={{ marginBottom: 12 }}>
+            <div className="prompt-card-header">Agent Thinking — Last Move</div>
+            <div className="prompt-card-body" style={{ fontFamily: 'monospace', fontSize: '0.8rem', whiteSpace: 'pre-wrap', maxHeight: 180, overflowY: 'auto' }}>
+              {latestReasoning || <span style={{ color: 'var(--text-secondary)' }}>Waiting for first move…</span>}
             </div>
-          )}
+          </div>
           {currentPrompt && (
             <div className="prompt-card">
               <div className="prompt-card-header">Current Strategy Prompt</div>

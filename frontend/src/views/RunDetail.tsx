@@ -54,8 +54,15 @@ function PromptTimeline({ generations }: PromptTabProps) {
         </span>
       </div>
 
-      <div className="grid-2">
-        <div>
+      {cur.reflectionSummary && (
+        <div className="prompt-card mb-24" style={{ borderLeft: '3px solid var(--danger)' }}>
+          <div className="prompt-card-header" style={{ color: 'var(--danger)' }}>Diagnosis — Key Failures</div>
+          <div className="prompt-card-body" style={{ whiteSpace: 'pre-wrap' }}>{cur.reflectionSummary}</div>
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 24 }}>
+        <div style={{ minWidth: 0 }}>
           <div className="prompt-card">
             <div className="prompt-card-header">Strategy Prompt — Gen {cur.genIndex}</div>
             <div className="prompt-card-body">{cur.promptText}</div>
@@ -67,7 +74,7 @@ function PromptTimeline({ generations }: PromptTabProps) {
             </div>
           )}
         </div>
-        <div>
+        <div style={{ minWidth: 0, overflowX: 'auto' }}>
           {prev ? (
             <PromptDiff
               oldPrompt={prev.promptText}
@@ -232,7 +239,7 @@ export default function RunDetail() {
             className={`tab-btn${tab === t ? ' active' : ''}`}
             onClick={() => setTab(t)}
           >
-            {t === 'charts' ? 'Charts' : t === 'prompts' ? 'Prompt Timeline' : t === 'games' ? 'Games' : 'Analysis'}
+            {t === 'charts' ? 'Charts' : t === 'prompts' ? 'Prompt Timeline' : t === 'games' ? 'Games' : 'Deep Analysis'}
           </button>
         ))}
       </div>

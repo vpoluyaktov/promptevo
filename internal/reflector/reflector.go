@@ -10,12 +10,24 @@ import (
 	"promptevo/internal/llm"
 )
 
-// PromptStartDelimiter and PromptEndDelimiter wrap the reflector's rewritten
-// prompt. The parser extracts the text strictly between them.
+// Delimiters used by the reflector for structured output parsing.
 const (
-	PromptStartDelimiter = "---PROMPT_START---"
-	PromptEndDelimiter   = "---PROMPT_END---"
+	PromptStartDelimiter   = "---PROMPT_START---"
+	PromptEndDelimiter     = "---PROMPT_END---"
+	SummaryStartDelimiter  = "---SUMMARY_START---"
+	SummaryEndDelimiter    = "---SUMMARY_END---"
 )
+
+// PriorGeneration is a compact summary of one completed generation for history context.
+type PriorGeneration struct {
+	GenIndex        int
+	SolveRate       float64
+	MeanGuesses     float64
+	MeanInfoGain    float64
+	ViolationRate   float64
+	WinDistribution string
+	Prompt          string
+}
 
 // GenerationStats is the aggregate fed to the reflector.
 type GenerationStats struct {
@@ -27,6 +39,7 @@ type GenerationStats struct {
 	WinDistribution string   // e.g. "turn 1: 2 | turn 2: 4 | lost: 4"
 	FailedSamples   []string // up to 3 lost games with per-turn reasoning
 	WonSamples      []string // up to 2 won games showing successful constraint tracking
+	History         []PriorGeneration // all completed generations before this one
 }
 
 // TokenUsage records input/output tokens for one LLM call.
@@ -42,9 +55,10 @@ type Reflector struct {
 	Temperature float64
 }
 
-// Reflect returns the next strategy prompt. When the delimited block cannot be
-// parsed, ok is false and the caller reuses currentPrompt (ARCHITECTURE.md §9.5).
-func (r *Reflector) Reflect(ctx context.Context, currentPrompt string, stats GenerationStats) (newPrompt string, reflection string, ok bool, usage TokenUsage, err error) {
+// Reflect returns the next strategy prompt and a diagnosis summary.
+// When the delimited prompt block cannot be parsed, ok is false and the caller
+// reuses currentPrompt. summary may be non-empty even when ok is false.
+func (r *Reflector) Reflect(ctx context.Context, currentPrompt string, stats GenerationStats) (newPrompt string, summary string, reflection string, ok bool, usage TokenUsage, err error) {
 	sysMsg := `You are an AI research assistant improving a Wordle-playing agent's strategy prompt.
 
 Your job: analyse performance data and make SURGICAL changes to the strategy content only.
@@ -55,8 +69,18 @@ STRICT RULES:
 - Do NOT add motivational language, personality, or meta-commentary
 - Do NOT restructure sections that already work
 - Every change must be directly justified by a specific failure pattern in the data
+- KEEP THE PROMPT AS SHORT AS POSSIBLE — every token in the strategy prompt is paid for on every single player move; unnecessary words, repetition, or verbose explanations directly inflate experiment cost with no benefit to game performance; ruthlessly cut any sentence that does not change player behaviour
 
-Output the improved prompt wrapped in these exact delimiters:
+Output in exactly this order:
+
+1. A diagnosis summary wrapped in these delimiters (2–8 bullet points, plain text, no markdown headers):
+---SUMMARY_START---
+• Key failure pattern 1
+• Key failure pattern 2
+• …
+---SUMMARY_END---
+
+2. The improved strategy prompt wrapped in these delimiters:
 ---PROMPT_START---
 <improved strategy prompt>
 ---PROMPT_END---
@@ -77,17 +101,18 @@ The prompt must be 100–4000 characters.`
 
 	resp, callErr := r.Client.Complete(ctx, req)
 	if callErr != nil {
-		return currentPrompt, "", false, usage, fmt.Errorf("reflector LLM call: %w", callErr)
+		return currentPrompt, "", "", false, usage, fmt.Errorf("reflector LLM call: %w", callErr)
 	}
 	usage.InputTokens = resp.InputTokens
 	usage.OutputTokens = resp.OutputTokens
 
+	parsedSummary, _ := ParseSummary(resp.Content)
 	parsed, parsedOK := ParsePrompt(resp.Content)
 	if !parsedOK {
-		return currentPrompt, resp.Content, false, usage, nil
+		return currentPrompt, parsedSummary, resp.Content, false, usage, nil
 	}
 
-	return parsed, resp.Content, true, usage, nil
+	return parsed, parsedSummary, resp.Content, true, usage, nil
 }
 
 // ParsePrompt extracts the text between the PROMPT delimiters. ok is false if
@@ -115,11 +140,43 @@ func ParsePrompt(raw string) (prompt string, ok bool) {
 	return inner, true
 }
 
+// ParseSummary extracts the text between the SUMMARY delimiters.
+// ok is false if the delimiters are absent or the inner text is empty.
+func ParseSummary(raw string) (summary string, ok bool) {
+	startIdx := strings.Index(raw, SummaryStartDelimiter)
+	endIdx := strings.Index(raw, SummaryEndDelimiter)
+	if startIdx == -1 || endIdx == -1 || endIdx <= startIdx {
+		return "", false
+	}
+	inner := strings.TrimSpace(raw[startIdx+len(SummaryStartDelimiter) : endIdx])
+	if inner == "" {
+		return "", false
+	}
+	return inner, true
+}
+
 // buildReflectorUserMessage formats the prompt for the reflector LLM.
 func buildReflectorUserMessage(currentPrompt string, stats GenerationStats) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("## Generation %d Performance\n\n", stats.GenIndex))
+	// ── Historical context ────────────────────────────────────────────────────
+	if len(stats.History) > 0 {
+		sb.WriteString("## History of All Prior Generations\n\n")
+		sb.WriteString("Use this to detect trends, avoid repeating failed tactics, and understand what has already been tried.\n\n")
+		for _, h := range stats.History {
+			sb.WriteString(fmt.Sprintf("### Gen %d — solve %.1f%% | mean guesses %.2f | info gain %.2f bits | violations %.1f%%",
+				h.GenIndex, h.SolveRate*100, h.MeanGuesses, h.MeanInfoGain, h.ViolationRate*100))
+			if h.WinDistribution != "" {
+				sb.WriteString(fmt.Sprintf(" | dist: %s", h.WinDistribution))
+			}
+			sb.WriteString("\n")
+			sb.WriteString("Prompt used:\n```\n")
+			sb.WriteString(h.Prompt)
+			sb.WriteString("\n```\n\n")
+		}
+	}
+
+	sb.WriteString(fmt.Sprintf("## Generation %d Performance (current — needs improvement)\n\n", stats.GenIndex))
 	sb.WriteString(fmt.Sprintf("- Solve rate: %.1f%%\n", stats.SolveRate*100))
 	sb.WriteString(fmt.Sprintf("- Mean guesses used: %.2f\n", stats.MeanGuesses))
 	sb.WriteString(fmt.Sprintf("- Mean information gain: %.2f bits/game\n", stats.MeanInfoGain))
@@ -152,9 +209,15 @@ func buildReflectorUserMessage(currentPrompt string, stats GenerationStats) stri
 
 	sb.WriteString("## Your Task\n\n")
 	sb.WriteString("1. Identify specific strategic failures in the lost game examples above.\n")
-	sb.WriteString("2. Make targeted changes to the strategy content only — fix the specific tactical weaknesses you identified.\n")
-	sb.WriteString("3. Do NOT change grammar, punctuation, or phrasing. Only change strategy instructions.\n")
-	sb.WriteString("4. Output the updated prompt between the required delimiters:\n\n")
+	sb.WriteString("2. Write a concise diagnosis summary (2–8 bullet points) listing the key failure patterns.\n")
+	sb.WriteString("3. Make targeted changes to the strategy content only — fix the specific tactical weaknesses you identified.\n")
+	sb.WriteString("4. Do NOT change grammar, punctuation, or phrasing. Only change strategy instructions.\n")
+	sb.WriteString("5. SHORTEN wherever possible — remove any sentence that does not directly change player behaviour; the player pays tokens for every word on every turn.\n")
+	sb.WriteString("6. Output in this exact order:\n\n")
+	sb.WriteString("---SUMMARY_START---\n")
+	sb.WriteString("• <key failure pattern 1>\n")
+	sb.WriteString("• <key failure pattern 2>\n")
+	sb.WriteString("---SUMMARY_END---\n\n")
 	sb.WriteString("---PROMPT_START---\n")
 	sb.WriteString("<updated strategy prompt>\n")
 	sb.WriteString("---PROMPT_END---\n")
