@@ -46,32 +46,32 @@ export default function AnalysisTab({ runId, generations, maxGuesses }: Props) {
       <ChartCard title="Solve Rate with 95% CI" metricKey="solveRateCI" subtitle={`${data.meta.totalLlmGames} LLM games · ${data.meta.generations} generations`}>
         <SolveRateCIChart data={data.solveRateCI} baselines={data.baselineStats} />
       </ChartCard>
-      <ChartCard title="Win Distribution by Turn" metricKey="winDistribution">
-        <WinDistributionChart data={data.winDistribution} maxGuesses={maxGuesses} />
+      <ChartCard title="Remaining Candidates at Game-Over" metricKey="remainingCandidates" subtitle="Losses only">
+        <RemainingCandidatesChart data={data.remainingCandidates} />
       </ChartCard>
       <ChartCard title="Turn-Level Information Gain" metricKey="turnInfoGain">
         <TurnInfoGainChart data={data.turnInfoGain} />
       </ChartCard>
-      <ChartCard title="Opening Word Frequency" metricKey="openingWords">
-        <OpeningWordsChart data={data.openingWords} />
-      </ChartCard>
-      <ChartCard title="Remaining Candidates at Game-Over" metricKey="remainingCandidates" subtitle="Losses only">
-        <RemainingCandidatesChart data={data.remainingCandidates} />
+      <ChartCard title="Constraint Violations per Game" metricKey="violationRate">
+        <ViolationRateChart generations={generations} />
       </ChartCard>
       <ChartCard title="Prompt Edit Distance" metricKey="promptEditDistance">
         <PromptEditDistanceChart generations={generations} />
       </ChartCard>
-      <ChartCard title="Token Efficiency" metricKey="tokenEfficiency">
-        <TokenEfficiencyChart data={data.tokenEfficiency} />
-      </ChartCard>
       <ChartCard title="Reasoning Verbosity vs Outcome" metricKey="reasoningVerbosity">
         <ReasoningScatterChart data={data.reasoningVerbosity} />
       </ChartCard>
+      <ChartCard title="Token Efficiency" metricKey="tokenEfficiency">
+        <TokenEfficiencyChart data={data.tokenEfficiency} />
+      </ChartCard>
+      <ChartCard title="Win Distribution by Turn" metricKey="winDistribution">
+        <WinDistributionChart data={data.winDistribution} maxGuesses={maxGuesses} />
+      </ChartCard>
+      <ChartCard title="Opening Word Frequency" metricKey="openingWords">
+        <OpeningWordsChart data={data.openingWords} />
+      </ChartCard>
       <ChartCard title="Per-Word Difficulty" metricKey="wordDifficulty" subtitle="Hardest first · top 30">
         <WordDifficultyChart data={data.wordDifficulty} />
-      </ChartCard>
-      <ChartCard title="Constraint Violations per Game" metricKey="violationRate">
-        <ViolationRateChart generations={generations} />
       </ChartCard>
     </div>
   )
