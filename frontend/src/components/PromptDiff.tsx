@@ -38,7 +38,7 @@ export default function PromptDiff({ oldPrompt, newPrompt, title }: Props) {
           ≡ Changes only
         </button>
       </div>
-      <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, overflow: 'hidden', fontSize: '0.8rem' }}>
+      <div className="prompt-diff-wrap" style={{ border: '1px solid #e0e0e0', borderRadius: 8, overflow: 'hidden', fontSize: '0.8rem' }}>
         <ReactDiffViewer
           oldValue={oldPrompt}
           newValue={newPrompt}
