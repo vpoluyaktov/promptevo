@@ -74,7 +74,7 @@ function PromptTimeline({ generations }: PromptTabProps) {
             </div>
           )}
         </div>
-        <div style={{ minWidth: 0, overflowX: 'auto' }}>
+        <div style={{ minWidth: 0, overflow: 'hidden' }}>
           {prev ? (
             <PromptDiff
               oldPrompt={prev.promptText}
