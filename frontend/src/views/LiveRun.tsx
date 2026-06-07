@@ -82,9 +82,11 @@ export default function LiveRun() {
 
       // Count games already completed in the in-progress generation (LLM only).
       // Seeds the dedup set so SSE game_end events for the same games aren't double-counted.
+      // Filter to numGuesses > 0: a game is inserted into the DB immediately when it starts
+      // (won=false, numGuesses=0), so excluding those avoids counting in-progress games as losses.
       if (inProgressGen) {
         api.listGames(runId, inProgressGen.genIndex).then((g) => {
-          const llmGames = g.games.filter((game) => game.agentType === 'llm')
+          const llmGames = g.games.filter((game) => game.agentType === 'llm' && game.numGuesses > 0)
           llmGames.forEach((game) => countedGameIdsRef.current.add(game.id))
           setGamesCompleted(llmGames.length)
           setGamesWon(llmGames.filter((game) => game.won).length)
