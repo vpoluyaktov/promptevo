@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import {
   LineChart,
   Line,
@@ -11,7 +10,6 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import type { Generation } from '../api/types'
-import InfoPopup from './InfoPopup'
 
 interface Props {
   generations: Generation[]
@@ -19,13 +17,11 @@ interface Props {
 }
 
 export default function MetricsChart({ generations, showBaselines }: Props) {
-  const [violationInfoOpen, setViolationInfoOpen] = useState(false)
   const data = generations.map((g) => ({
     gen: `Gen ${g.genIndex}`,
     solveRate: g.solveRate != null ? +(g.solveRate * 100).toFixed(1) : null,
     meanGuesses: g.meanGuesses != null ? +g.meanGuesses.toFixed(2) : null,
     meanInfoGain: g.meanInfoGain != null ? +g.meanInfoGain.toFixed(2) : null,
-    violationRate: g.violationRate != null ? +g.violationRate.toFixed(2) : null,
     promptLen: g.promptLen,
   }))
 
@@ -79,33 +75,6 @@ export default function MetricsChart({ generations, showBaselines }: Props) {
             <YAxis tick={{ fontSize: 12 }} />
             <Tooltip />
             <Line type="monotone" dataKey="meanInfoGain" name="Mean Info Gain" stroke="#787c7e" strokeWidth={2} dot={{ r: 4 }} connectNulls />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Constraint violation rate */}
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <h4 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
-            Constraint Violations (per game)
-          </h4>
-          <button
-            onClick={() => setViolationInfoOpen(true)}
-            aria-label="About constraint violations"
-            style={{ background: 'none', border: '1.5px solid var(--text-secondary)', borderRadius: '50%', width: 22, height: 22, fontSize: '0.75rem', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
-          >
-            ⓘ
-          </button>
-        </div>
-        <InfoPopup metricKey="violationRate" open={violationInfoOpen} onClose={() => setViolationInfoOpen(false)} />
-        <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-            <XAxis dataKey="gen" tick={{ fontSize: 12 }} />
-            <YAxis tickFormatter={v => `${v}`} tick={{ fontSize: 12 }} />
-            <Tooltip formatter={(v: number) => [`${v}`, 'Violations/game']} />
-            <ReferenceLine y={0} stroke="#e0e0e0" />
-            <Line type="monotone" dataKey="violationRate" name="Violations/game" stroke="#e06c75" strokeWidth={2} dot={{ r: 4 }} connectNulls />
           </LineChart>
         </ResponsiveContainer>
       </div>

@@ -12,6 +12,7 @@ import PromptEditDistanceChart from './PromptEditDistanceChart'
 import TokenEfficiencyChart from './TokenEfficiencyChart'
 import ReasoningScatterChart from './ReasoningScatterChart'
 import WordDifficultyChart from './WordDifficultyChart'
+import ViolationRateChart from './ViolationRateChart'
 
 interface Props {
   runId: number
@@ -68,6 +69,9 @@ export default function AnalysisTab({ runId, generations, maxGuesses }: Props) {
       </ChartCard>
       <ChartCard title="Per-Word Difficulty" metricKey="wordDifficulty" subtitle="Hardest first · top 30">
         <WordDifficultyChart data={data.wordDifficulty} />
+      </ChartCard>
+      <ChartCard title="Constraint Violations per Game" metricKey="violationRate">
+        <ViolationRateChart generations={generations} />
       </ChartCard>
     </div>
   )
